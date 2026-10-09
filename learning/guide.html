@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Rempart — le guide illustré</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#14161b;--muted:#5c6370;--line:#e3e6eb;--bg:#ffffff;--soft:#f5f6f8;--brand:#6d4aff;--brand2:#2a78d6;--crit:#d92d2d;--high:#e8590c;--med:#d9a400;--low:#2a78d6;--ok:#12805c;--navy:#0f1222}
+@page{size:A4;margin:0}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:#e9ebef;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:210mm;height:297mm;background:var(--bg);margin:0 auto;padding:16mm 15mm 14mm;position:relative;overflow:hidden;page-break-after:always;break-after:page}
+.page:last-child{page-break-after:auto}
+.num{position:absolute;bottom:8mm;right:15mm;font-size:9pt;color:var(--muted)}
+.tag{display:inline-block;font-size:8.5pt;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--brand);margin-bottom:3mm}
+h1{font-size:25pt;line-height:1.1;margin:0 0 3mm;font-weight:800;letter-spacing:-.02em}
+h2{font-size:13pt;margin:6mm 0 2mm}
+p.lead{font-size:11.5pt;color:var(--muted);margin:0 0 6mm;max-width:165mm}
+.mono,code,pre{font-family:"JetBrains Mono",ui-monospace,monospace}
+pre{background:var(--navy);color:#e6e8ef;border-radius:10px;padding:4mm 5mm;font-size:8.6pt;line-height:1.55;margin:0;white-space:pre-wrap}
+pre .c{color:#7d8597}.k{color:#c792ea}.s{color:#c3e88d}.bad{background:rgba(217,45,45,.28);border-radius:3px}.good{background:rgba(18,128,92,.32);border-radius:3px}.hl{color:#ffcb6b}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:5mm}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:4mm}
+.card{border:1px solid var(--line);border-radius:12px;padding:4mm 4.5mm;background:#fff}
+.card h3{margin:0 0 1.5mm;font-size:10.5pt}
+.card p{margin:0;font-size:9.2pt;color:var(--muted);line-height:1.45}
+.soft{background:var(--soft);border:none}
+.big{font-size:26pt;font-weight:800;letter-spacing:-.02em;line-height:1}
+.small{font-size:9pt;color:var(--muted)}
+.pill{display:inline-block;padding:1mm 2.6mm;border-radius:99px;font-size:8.2pt;font-weight:600;margin:0 1.2mm 1.5mm 0}
+.p-crit{background:#fde2e2;color:var(--crit)}.p-high{background:#ffe8d9;color:var(--high)}.p-ok{background:#d9f2e8;color:var(--ok)}.p-brand{background:#ece6ff;color:var(--brand)}.p-blue{background:#dcebfb;color:#1c5cab}
+.note{border-left:4px solid var(--brand);background:#f6f3ff;padding:3mm 4mm;border-radius:0 8px 8px 0;font-size:10pt;margin-top:5mm}
+.note b{color:var(--brand)}
+table{border-collapse:collapse;width:100%;font-size:9.4pt}
+td,th{padding:2.2mm 2.5mm;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:8.5pt;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+svg text{font-family:Inter,system-ui,sans-serif}
+/* cover */
+.cover{background:radial-gradient(120% 80% at 80% 0%,#2b1f6b 0%,#0f1222 55%,#0a0c17 100%);color:#fff;display:flex;flex-direction:column}
+.cover .tag{color:#b9a7ff}
+.cover h1{font-size:46pt;margin-top:4mm}
+.cover p{color:#c9cbe0;font-size:13pt;max-width:150mm;line-height:1.5}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:4mm;margin-top:auto}
+.kpi{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:5mm}
+.kpi .big{color:#fff;font-size:28pt}.kpi div{color:#b7b9cf;font-size:9.5pt;margin-top:1.5mm}
+.step{display:flex;gap:4mm;align-items:flex-start;margin-bottom:4mm}
+.dot{flex:0 0 9mm;height:9mm;border-radius:50%;background:var(--brand);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:11pt}
+.step h3{margin:.6mm 0 1mm;font-size:11pt}.step p{margin:0;font-size:9.6pt;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<!-- 1. COUVERTURE -->
+<section class="page cover">
+  <svg width="64" height="74" viewBox="0 0 64 74" style="margin-top:6mm">
+    <defs><linearGradient id="sg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8e75ff"/><stop offset="1" stop-color="#3d7bff"/></linearGradient></defs>
+    <path d="M32 2 L60 12 V36 C60 54 47 66 32 72 C17 66 4 54 4 36 V12 Z" fill="url(#sg)"/>
+    <path d="M18 24h28v8H18zM18 36h12v12H18zM34 36h12v12H34z" fill="#fff" opacity=".92"/>
+  </svg>
+  <div class="tag" style="margin-top:10mm">Guide d'apprentissage · version 0.2</div>
+  <h1>Rempart,<br>expliqué en images</h1>
+  <p>Ce que fait l'outil, comment il raisonne, et pourquoi chaque morceau existe. Une idée par page, des exemples réels tirés de tes propres projets.</p>
+  <div style="margin:10mm 0 0;display:flex;flex-wrap:wrap;gap:2mm">
+    <span class="pill p-brand">Code</span><span class="pill p-brand">Secrets</span><span class="pill p-brand">Dépendances</span><span class="pill p-brand">Images</span><span class="pill p-brand">AWS en direct</span><span class="pill p-brand">Kubernetes</span><span class="pill p-brand">CI/CD</span><span class="pill p-brand">Données</span><span class="pill p-brand">Agents IA</span><span class="pill p-brand">Web</span>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="big">268</div><div>règles de détection</div></div>
+    <div class="kpi"><div class="big">16</div><div>domaines couverts</div></div>
+    <div class="kpi"><div class="big">9</div><div>chemins d'attaque reconnus</div></div>
+    <div class="kpi"><div class="big">79</div><div>tests automatiques, tous verts</div></div>
+  </div>
+  <div class="num" style="color:#8a8daa">1</div>
+</section>
+
+<!-- 2. LA CARTE -->
+<section class="page">
+  <div class="tag">La vue d'ensemble</div>
+  <h1>Une seule passe, cinq sources, une seule réponse</h1>
+  <p class="lead">Rempart lit ce que tu lui donnes, cherche les faiblesses, puis les fait passer par six couches d'intelligence avant de produire un rapport.</p>
+  <svg viewBox="0 0 720 560" width="100%">
+    <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#9aa1ad"/></marker></defs>
+    <!-- sources -->
+    <g font-size="13" font-weight="600">
+      <text x="0" y="16" fill="#5c6370" font-size="11" letter-spacing="1">CE QU'IL LIT</text>
+      <g transform="translate(0,30)"><rect width="150" height="44" rx="10" fill="#ece6ff"/><text x="14" y="27">Ton dépôt de code</text></g>
+      <g transform="translate(0,84)"><rect width="150" height="44" rx="10" fill="#ece6ff"/><text x="14" y="27">Image de conteneur</text></g>
+      <g transform="translate(0,138)"><rect width="150" height="44" rx="10" fill="#ece6ff"/><text x="14" y="27">Compte AWS réel</text></g>
+      <g transform="translate(0,192)"><rect width="150" height="44" rx="10" fill="#ece6ff"/><text x="14" y="27">Cluster Kubernetes</text></g>
+      <g transform="translate(0,246)"><rect width="150" height="44" rx="10" fill="#ece6ff"/><text x="14" y="27">Ton site en ligne</text></g>
+    </g>
+    <g stroke="#9aa1ad" stroke-width="2" fill="none" marker-end="url(#ar)">
+      <path d="M152 52 C200 52 200 160 238 160"/><path d="M152 106 C200 106 200 160 238 160"/><path d="M152 160 H238"/><path d="M152 214 C200 214 200 160 238 160"/><path d="M152 268 C200 268 200 160 238 160"/>
+    </g>
+    <!-- scanners -->
+    <g transform="translate(240,30)">
+      <text x="0" y="-14" fill="#5c6370" font-size="11" letter-spacing="1">13 SCANNERS</text>
+      <rect width="200" height="262" rx="14" fill="#0f1222"/>
+      <g fill="#e6e8ef" font-size="12.5">
+        <text x="18" y="32">secrets</text><text x="110" y="32">code</text>
+        <text x="18" y="62">dépendances</text><text x="110" y="62">terraform</text>
+        <text x="18" y="92">conteneurs</text><text x="110" y="92">kubernetes</text>
+        <text x="18" y="122">ci/cd</text><text x="110" y="122">données</text>
+        <text x="18" y="152">agents IA</text><text x="110" y="152">qualité</text>
+        <text x="18" y="182">images</text><text x="110" y="182">aws live</text>
+        <text x="18" y="212">web passif</text>
+      </g>
+      <text x="18" y="244" fill="#8e75ff" font-size="12" font-weight="700">→ 268 règles</text>
+    </g>
+    <path d="M442 160 H488" stroke="#9aa1ad" stroke-width="2" marker-end="url(#ar)"/>
+    <!-- intelligence -->
+    <g transform="translate(490,30)" font-size="12.5" font-weight="600">
+      <text x="0" y="-14" fill="#5c6370" font-size="11" letter-spacing="1">6 COUCHES D'INTELLIGENCE</text>
+      <g><rect width="230" height="36" rx="9" fill="#dcebfb"/><text x="12" y="23">① suivi du flux de données</text></g>
+      <g transform="translate(0,44)"><rect width="230" height="36" rx="9" fill="#dcebfb"/><text x="12" y="23">② la dépendance est-elle utilisée ?</text></g>
+      <g transform="translate(0,88)"><rect width="230" height="36" rx="9" fill="#dcebfb"/><text x="12" y="23">③ la clé fuitée marche-t-elle ?</text></g>
+      <g transform="translate(0,132)"><rect width="230" height="36" rx="9" fill="#fde2e2"/><text x="12" y="23">④ chemins d'attaque</text></g>
+      <g transform="translate(0,176)"><rect width="230" height="36" rx="9" fill="#ece6ff"/><text x="12" y="23">⑤ l'agent IA relit le code</text></g>
+      <g transform="translate(0,220)"><rect width="230" height="36" rx="9" fill="#d9f2e8"/><text x="12" y="23">⑥ il apprend de tes verdicts</text></g>
+    </g>
+    <path d="M605 300 V340" stroke="#9aa1ad" stroke-width="2" marker-end="url(#ar)"/>
+    <!-- outputs -->
+    <g transform="translate(240,345)">
+      <text x="0" y="-8" fill="#5c6370" font-size="11" letter-spacing="1">CE QU'IL PRODUIT</text>
+      <g font-size="12.5" font-weight="600">
+        <g transform="translate(0,6)"><rect width="150" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">Terminal coloré</text></g>
+        <g transform="translate(160,6)"><rect width="150" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">Rapport HTML</text></g>
+        <g transform="translate(320,6)"><rect width="160" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">SARIF → GitHub</text></g>
+        <g transform="translate(0,56)"><rect width="150" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">JSON / Markdown</text></g>
+        <g transform="translate(160,56)"><rect width="150" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">Note de A à F</text></g>
+        <g transform="translate(320,56)"><rect width="160" height="40" rx="10" fill="#f5f6f8" stroke="#e3e6eb"/><text x="14" y="25">Outil MCP pour IA</text></g>
+      </g>
+    </g>
+    <g transform="translate(0,350)">
+      <rect width="220" height="150" rx="12" fill="#fff8e6" stroke="#f2d48a"/>
+      <text x="16" y="30" font-size="13" font-weight="700">Le principe clé</text>
+      <text x="16" y="56" font-size="11.5" fill="#5c6370">Chaque résultat dit</text>
+      <text x="16" y="74" font-size="11.5" fill="#5c6370">comment il a été prouvé :</text>
+      <text x="16" y="100" font-size="11.5" font-family="JetBrains Mono" fill="#14161b">static · reachable</text>
+      <text x="16" y="118" font-size="11.5" font-family="JetBrains Mono" fill="#14161b">observed · live-secret</text>
+      <text x="16" y="136" font-size="11.5" font-family="JetBrains Mono" fill="#14161b">correlated · ai-confirmed</text>
+    </g>
+  </svg>
+  <div class="num">2</div>
+</section>
+
+<!-- 3. PIPELINE -->
+<section class="page">
+  <div class="tag">Le moteur</div>
+  <h1>Un scan, étape par étape</h1>
+  <p class="lead">Ce qui se passe quand tu tapes <code>rempart scan .</code> — en 0,5 à 3 secondes sur un vrai projet.</p>
+  <div class="step"><div class="dot">1</div><div><h3>Trouver les fichiers</h3><p>Il demande la liste à Git. Ce qui est dans <code>.gitignore</code> n'est jamais envoyé sur GitHub, donc il ne le signale pas : ton <code>.env</code> local n'est pas une fuite, un <code>.env</code> committé en est une.</p></div></div>
+  <div class="step"><div class="dot">2</div><div><h3>Lancer les 13 scanners</h3><p>Chacun reçoit les mêmes fichiers et renvoie des « findings ». Si un scanner plante, les autres continuent : l'erreur apparaît dans le rapport.</p></div></div>
+  <div class="step"><div class="dot">3</div><div><h3>Enlever le bruit</h3><p>Règles désactivées dans <code>.rempart.toml</code>, commentaires <code>rempart:ignore</code>, doublons.</p></div></div>
+  <div class="step"><div class="dot">4</div><div><h3>Appliquer ce qu'il a appris</h3><p>Les faux positifs que tu as marqués disparaissent ; la confiance de chaque règle est recalculée.</p></div></div>
+  <div class="step"><div class="dot">5</div><div><h3>Chercher les chemins d'attaque</h3><p>Il combine des résultats de domaines différents en scénarios complets.</p></div></div>
+  <div class="step"><div class="dot">6</div><div><h3>Noter et trier</h3><p>Chaque finding reçoit un risque de 0 à 100 ; le dépôt reçoit une note de A à F.</p></div></div>
+  <h2>Anatomie d'un finding</h2>
+  <svg viewBox="0 0 720 150" width="100%">
+    <rect x="0" y="0" width="720" height="110" rx="12" fill="#0f1222"/>
+    <rect x="16" y="18" width="46" height="22" rx="4" fill="#d92d2d"/><text x="22" y="34" fill="#fff" font-size="12" font-weight="800">CRIT</text>
+    <text x="74" y="34" fill="#fff" font-size="14" font-weight="600">SQL query built by string interpolation</text>
+    <text x="520" y="34" fill="#7d8597" font-size="12" font-family="JetBrains Mono">api/app.py:20</text>
+    <text x="74" y="60" fill="#c9cbe0" font-size="12">.execute() with an interpolated SQL string (built earlier in `q`).</text>
+    <text x="74" y="86" fill="#7d8597" font-size="11.5" font-family="JetBrains Mono">id 7d9771c7fb · CODE-SQL-INJECTION · risk 81 · static</text>
+    <g font-size="11" fill="#6d4aff" font-weight="600">
+      <text x="10" y="135">sévérité</text><text x="150" y="135">la règle (CWE-89, OWASP A05)</text><text x="400" y="135">emplacement exact</text><text x="580" y="135">l'id pour trier</text>
+    </g>
+  </svg>
+  <h2>La note du dépôt</h2>
+  <svg viewBox="0 0 720 120" width="100%">
+    <g font-weight="800" font-size="22" fill="#fff" text-anchor="middle">
+      <rect x="0" y="10" width="140" height="56" rx="10" fill="#12805c"/><text x="70" y="47">A</text>
+      <rect x="145" y="10" width="140" height="56" rx="10" fill="#2a78d6"/><text x="215" y="47">B</text>
+      <rect x="290" y="10" width="140" height="56" rx="10" fill="#d9a400"/><text x="360" y="47">C</text>
+      <rect x="435" y="10" width="140" height="56" rx="10" fill="#e8590c"/><text x="505" y="47">D</text>
+      <rect x="580" y="10" width="140" height="56" rx="10" fill="#d92d2d"/><text x="650" y="47">F</text>
+    </g>
+    <g font-size="11.5" fill="#5c6370" text-anchor="middle"><text x="70" y="86">90 et plus</text><text x="215" y="86">75–89</text><text x="360" y="86">60–74</text><text x="505" y="86">40–59</text><text x="650" y="86">moins de 40</text></g>
+    <g font-size="11.5" font-weight="600" text-anchor="middle"><text x="70" y="108">Rempart · triage</text><text x="650" y="108">app de démo : 1/100</text></g>
+  </svg>
+  <div class="note"><b>Pourquoi 50 alertes identiques ne coulent pas la note :</b> les répétitions d'une même règle comptent 1, ½, ⅓… Beaucoup de problèmes <i>différents</i>, eux, font chuter la note.</div>
+  <div class="num">3</div>
+</section>
+
+<!-- 4. EXEMPLE SQL -->
+<section class="page">
+  <div class="tag">Exemple concret 1 · flux de données</div>
+  <h1>L'injection SQL cachée dans une variable</h1>
+  <p class="lead">Un outil naïf ne regarde que la ligne <code>execute(q)</code> : elle a l'air propre. Rempart remonte d'où vient <code>q</code>.</p>
+  <pre><span class="k">def</span> report(cur):
+    <span class="c"># ① vient de l'utilisateur → user_id est « tainted »</span>
+    user_id = <span class="bad">request.args["id"]</span>
+    <span class="c"># ② chaîne construite avec user_id → q est « dynamic »</span>
+    q = <span class="bad">f"SELECT * FROM t WHERE id = {user_id}"</span>
+    <span class="c"># ③ puits SQL + variable marquée → ALERTE</span>
+    cur.execute(<span class="bad">q</span>)</pre>
+  <svg viewBox="0 0 720 120" width="100%" style="margin:5mm 0">
+    <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#d92d2d"/></marker></defs>
+    <g font-size="13" font-weight="600">
+      <rect x="0" y="30" width="170" height="54" rx="10" fill="#fde2e2"/><text x="16" y="54">request.args</text><text x="16" y="72" font-size="11" fill="#5c6370" font-weight="400">source non fiable</text>
+      <rect x="275" y="30" width="170" height="54" rx="10" fill="#ffe8d9"/><text x="291" y="54">user_id → q</text><text x="291" y="72" font-size="11" fill="#5c6370" font-weight="400">propagation</text>
+      <rect x="550" y="30" width="170" height="54" rx="10" fill="#0f1222"/><text x="566" y="54" fill="#fff">cur.execute(q)</text><text x="566" y="72" font-size="11" fill="#c9cbe0" font-weight="400">puits dangereux</text>
+    </g>
+    <path d="M172 57 H270" stroke="#d92d2d" stroke-width="2.5" marker-end="url(#ar2)"/><path d="M447 57 H545" stroke="#d92d2d" stroke-width="2.5" marker-end="url(#ar2)"/>
+  </svg>
+  <h2>Le correctif proposé</h2>
+  <pre>q = <span class="good">"SELECT * FROM t WHERE id = %s"</span>
+cur.execute(q, <span class="good">(user_id,)</span>)
+<span class="c"># la base reçoit la valeur à part : impossible d'injecter du SQL</span></pre>
+  <div class="grid3" style="margin-top:6mm">
+    <div class="card soft"><h3>Python</h3><p>Analyse de l'arbre syntaxique (AST), variable par variable, fonction par fonction. Les paramètres de routes FastAPI comptent comme données utilisateur.</p></div>
+    <div class="card soft"><h3>JavaScript / TS</h3><p>Suit <code>req.body</code>, <code>request.json()</code>, <code>searchParams</code> et la déstructuration <code>const { file } = req.query</code>.</p></div>
+    <div class="card soft"><h3>Limite honnête</h3><p>Le suivi s'arrête à la frontière d'une fonction. Si la valeur passe par trois fonctions, c'est l'agent IA qui prend le relais.</p></div>
+  </div>
+  <div class="num">4</div>
+</section>
+
+<!-- 5. CHEMIN D'ATTAQUE -->
+<section class="page">
+  <div class="tag">Exemple concret 2 · corrélation</div>
+  <h1>Deux « élevés » qui font un « critique »</h1>
+  <p class="lead">Pris seuls, une SSRF et IMDSv1 sont deux problèmes moyens. Ensemble, c'est exactement le chemin de la brèche Capital One (2019, 100 millions de dossiers).</p>
+  <svg viewBox="0 0 720 300" width="100%">
+    <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#14161b"/></marker></defs>
+    <g font-size="13">
+      <g><circle cx="60" cy="90" r="44" fill="#ece6ff"/><text x="60" y="86" text-anchor="middle" font-weight="700">Attaquant</text><text x="60" y="104" text-anchor="middle" font-size="11" fill="#5c6370">une URL</text></g>
+      <g transform="translate(160,46)"><rect width="170" height="88" rx="12" fill="#ffe8d9"/><text x="14" y="28" font-weight="700">① SSRF dans le code</text><text x="14" y="50" font-size="11.5" fill="#5c6370">requests.get(url_utilisateur)</text><text x="14" y="70" font-size="11" font-family="JetBrains Mono" fill="#e8590c">api/app.py:31</text></g>
+      <g transform="translate(370,46)"><rect width="170" height="88" rx="12" fill="#ffe8d9"/><text x="14" y="28" font-weight="700">② IMDSv1 sur EC2</text><text x="14" y="50" font-size="11.5" fill="#5c6370">169.254.169.254 répond</text><text x="14" y="70" font-size="11" font-family="JetBrains Mono" fill="#e8590c">infra/main.tf:26</text></g>
+      <g transform="translate(580,46)"><rect width="140" height="88" rx="12" fill="#d92d2d"/><text x="14" y="28" font-weight="700" fill="#fff">③ Clés AWS</text><text x="14" y="50" font-size="11.5" fill="#ffe1e1">du rôle de</text><text x="14" y="68" font-size="11.5" fill="#ffe1e1">l'instance volées</text></g>
+    </g>
+    <g stroke="#14161b" stroke-width="2" marker-end="url(#ar3)"><path d="M106 90 H156"/><path d="M332 90 H366"/><path d="M542 90 H576"/></g>
+    <g transform="translate(370,150)"><path d="M85 0 V24" stroke="#12805c" stroke-width="2"/><rect x="0" y="24" width="240" height="70" rx="10" fill="#d9f2e8"/><text x="12" y="46" font-size="12.5" font-weight="700" fill="#12805c">Maillon le moins cher à casser</text><text x="12" y="66" font-size="11.5" fill="#14161b">http_tokens = "required"</text><text x="12" y="84" font-size="11" fill="#5c6370">une ligne, le chemin est coupé</text></g>
+    <text x="0" y="200" font-size="12" font-weight="700">Ce que Rempart affiche</text>
+    <rect x="0" y="210" width="350" height="78" rx="10" fill="#0f1222"/>
+    <text x="14" y="234" fill="#fff" font-size="12" font-weight="700">CRIT  SSRF can reach instance metadata credentials</text>
+    <text x="14" y="254" fill="#c9cbe0" font-size="10.5" font-family="JetBrains Mono">Links → CODE-SSRF at api/app.py:31</text>
+    <text x="14" y="272" fill="#c9cbe0" font-size="10.5" font-family="JetBrains Mono">| TF-EC2-IMDSV1 at infra/main.tf:26</text>
+  </svg>
+  <h2>Les 9 scénarios reconnus</h2>
+  <table>
+    <tr><th>Scénario</th><th>Maillons</th><th>Incident réel</th></tr>
+    <tr><td>SSRF → identifiants cloud</td><td>SSRF × IMDSv1</td><td>Capital One 2019</td></tr>
+    <tr><td>Base exposée</td><td>port public × pas d'auth / pas de chiffrement</td><td>rançons MongoDB 2026</td></tr>
+    <tr><td>CI piégée</td><td>code de PR exécuté × droits de publication</td><td>TanStack mai 2026</td></tr>
+    <tr><td>Évasion de conteneur</td><td>exécution de code × conteneur privilégié</td><td>—</td></tr>
+    <tr><td>Table publique</td><td>RLS manquante × clé publique dans le front</td><td>fuites Supabase</td></tr>
+    <tr><td>Console de debug</td><td>debug activé × écoute sur 0.0.0.0</td><td>RCE Werkzeug</td></tr>
+    <tr><td>Vol de sessions</td><td>faille XSS × jeton lisible par JavaScript</td><td>—</td></tr>
+    <tr><td>Admin cloud exposé</td><td>politique *:* × clé qui peut fuiter</td><td>—</td></tr>
+    <tr><td>Ver npm</td><td>code à l'installation × jeton de publication</td><td>Shai-Hulud 2025</td></tr>
+  </table>
+  <div class="num">5</div>
+</section>
+
+<!-- 6. CVE -->
+<section class="page">
+  <div class="tag">Exemple concret 3 · priorisation</div>
+  <h1>Toutes les CVE ne se valent pas</h1>
+  <p class="lead">Le score CVSS dit « à quel point ce serait grave ». Il ne dit pas « est-ce que quelqu'un l'exploite ». Rempart ajoute deux preuves : la liste KEV de la CISA (exploitée pour de vrai) et EPSS (probabilité d'exploitation dans les 30 jours).</p>
+  <svg viewBox="0 0 720 300" width="100%" role="img" aria-label="Risque Rempart de quatre CVE réelles">
+    <text x="0" y="16" font-size="12.5" font-weight="700">Risque Rempart (0–100) de 4 vraies CVE, mesuré le 9 octobre 2026</text>
+    <g font-size="11" fill="#5c6370"><line x1="250" y1="34" x2="250" y2="250" stroke="#e3e6eb"/><line x1="450" y1="34" x2="450" y2="250" stroke="#e3e6eb"/><line x1="650" y1="34" x2="650" y2="250" stroke="#e3e6eb"/><text x="250" y="268" text-anchor="middle">0</text><text x="450" y="268" text-anchor="middle">50</text><text x="650" y="268" text-anchor="middle">100</text></g>
+    <g font-size="12">
+      <g transform="translate(0,44)"><text x="0" y="14" font-weight="600">React2Shell</text><text x="0" y="31" fill="#5c6370" font-size="10.5">CVSS 10 · EPSS 99,8 % · KEV</text><rect x="250" y="2" width="380" height="30" rx="4" fill="#2a78d6"/><text x="638" y="22" font-weight="700">95</text></g>
+      <g transform="translate(0,96)"><text x="0" y="14" font-weight="600">Next.js middleware</text><text x="0" y="31" fill="#5c6370" font-size="10.5">CVSS 9,1 · EPSS 99,2 %</text><rect x="250" y="2" width="369" height="30" rx="4" fill="#2a78d6"/><text x="627" y="22" font-weight="700">92</text></g>
+      <g transform="translate(0,148)"><text x="0" y="14" font-weight="600">lodash · injection</text><text x="0" y="31" fill="#5c6370" font-size="10.5">CVSS 7,2 · EPSS 21 %</text><rect x="250" y="2" width="273" height="30" rx="4" fill="#2a78d6"/><text x="531" y="22" font-weight="700">68</text></g>
+      <g transform="translate(0,200)"><text x="0" y="14" font-weight="600">lodash · prototype</text><text x="0" y="31" fill="#5c6370" font-size="10.5">CVSS 7,4 · EPSS 5 %</text><rect x="250" y="2" width="273" height="30" rx="4" fill="#2a78d6"/><text x="531" y="22" font-weight="700">68</text></g>
+    </g>
+  </svg>
+  <div class="grid2">
+    <div class="card"><h3>La formule, en clair</h3><p style="font-family:'JetBrains Mono';color:#14161b;font-size:9pt;line-height:1.7">risque = gravité × confiance<br>si EPSS connu → on le mélange<br>si dans KEV → au moins 95</p></div>
+    <div class="card"><h3>À retenir</h3><p>KEV est un <b>plancher</b>, pas un bonus : un fait (« c'est exploité ») passe devant une prédiction. C'est la logique de la directive BOD 22-01 de la CISA, la même que dans ton projet triage.</p></div>
+  </div>
+  <div class="note"><b>Bonus atteignabilité.</b> Pour chaque paquet vulnérable, Rempart regarde si ton code l'importe vraiment : « imported by your code », « declared », ou « transitive, not imported directly ». Un paquet jamais importé garde son alerte, mais avec une confiance réduite.</div>
+  <div class="num">6</div>
+</section>
+
+<!-- 7. IMAGE -->
+<section class="page">
+  <div class="tag">Exemple concret 4 · images</div>
+  <h1>Ouvrir une image Docker… sans Docker</h1>
+  <p class="lead">Une image, c'est une pile de couches (des archives .tar). Rempart les télécharge depuis le registre, les superpose, et ne garde que les fichiers utiles.</p>
+  <svg viewBox="0 0 720 270" width="100%">
+    <g font-size="12.5">
+      <g transform="translate(0,0)"><rect width="300" height="48" rx="8" fill="#dcebfb"/><text x="14" y="20" font-weight="700">Couche 1 · Debian</text><text x="14" y="38" fill="#5c6370" font-size="11">os-release · dpkg/status (64 paquets)</text></g>
+      <g transform="translate(0,56)"><rect width="300" height="48" rx="8" fill="#cde2fb"/><text x="14" y="20" font-weight="700">Couche 2 · Python 3.9</text><text x="14" y="38" fill="#5c6370" font-size="11">site-packages/*.dist-info</text></g>
+      <g transform="translate(0,112)"><rect width="300" height="48" rx="8" fill="#b7d3f6"/><text x="14" y="20" font-weight="700">Couche 3 · ton app</text><text x="14" y="38" fill="#5c6370" font-size="11">app/.env  ·  app/old.key</text></g>
+      <g transform="translate(0,168)"><rect width="300" height="48" rx="8" fill="#9ec5f4"/><text x="14" y="20" font-weight="700">Couche 4 · « .wh.old.key »</text><text x="14" y="38" fill="#14161b" font-size="11">un « whiteout » : old.key est supprimé</text></g>
+    </g>
+    <path d="M310 108 H360" stroke="#14161b" stroke-width="2" marker-end="url(#ar3)"/>
+    <g transform="translate(370,0)">
+      <rect width="350" height="216" rx="12" fill="#0f1222"/>
+      <text x="16" y="28" fill="#fff" font-size="13" font-weight="700">rempart image python:3.9-slim</text>
+      <text x="16" y="50" fill="#7d8597" font-size="11" font-family="JetBrains Mono">Debian 13 · 64 paquets · 6 secondes</text>
+      <g font-size="11.5">
+        <rect x="16" y="66" width="44" height="18" rx="3" fill="#e8590c"/><text x="21" y="79" fill="#fff" font-weight="800" font-size="10.5">HIGH</text><text x="68" y="79" fill="#e6e8ef">Python 3.9 en fin de vie (oct. 2025)</text>
+        <rect x="16" y="94" width="44" height="18" rx="3" fill="#d92d2d"/><text x="21" y="107" fill="#fff" font-weight="800" font-size="10.5">CRIT</text><text x="68" y="107" fill="#e6e8ef">openssl : CVE 2026, correctif dispo</text>
+        <rect x="16" y="122" width="44" height="18" rx="3" fill="#d9a400"/><text x="21" y="135" fill="#fff" font-weight="800" font-size="10.5">MED</text><text x="68" y="135" fill="#e6e8ef">tourne en root</text>
+        <rect x="16" y="150" width="44" height="18" rx="3" fill="#2a78d6"/><text x="23" y="163" fill="#fff" font-weight="800" font-size="10.5">LOW</text><text x="68" y="163" fill="#e6e8ef">glibc CVE 2019 non corrigée par Debian</text>
+        <text x="16" y="196" fill="#8e75ff" font-weight="700">176 vulnérabilités OS, les corrigeables d'abord</text>
+      </g>
+    </g>
+  </svg>
+  <div class="grid3" style="margin-top:4mm">
+    <div class="card"><h3>Fin de vie (EOL)</h3><p>Alpine 3.18 → fin mai 2025. Une version morte ne reçoit plus de correctifs : les nouvelles CVE resteront ouvertes pour toujours.</p></div>
+    <div class="card"><h3>Secrets oubliés</h3><p>Un <code>.env</code> copié dans l'image, une variable <code>API_TOKEN</code> dans la config ou l'historique de build : quiconque fait <code>docker pull</code> peut les lire.</p></div>
+    <div class="card"><h3>Le tri intelligent</h3><p>Une CVE de plus de 3 ans que Debian n'a jamais corrigée est souvent contestée ou mineure : gardée, mais classée LOW (sauf si KEV).</p></div>
+  </div>
+  <h2>En pratique</h2>
+  <pre>$ rempart image alpine:3.18
+alpine:3.18 · Alpine Linux v3.18 · 10 packages · user root · built 2025-02-14
+  HIGH  Base OS release is end-of-life      Alpine Linux v3.18 reached end-of-life on 2025-05-09.
+  MEDI  Image runs as root by default       No non-root USER is configured.
+  MEDI  Image has not been rebuilt in over a year   Built 602 days ago (2025-02-14).</pre>
+  <p class="small" style="margin-top:2mm">Sortie réelle, image tirée de Docker Hub en 1 seconde. Aucune CVE listée : normal, une version morte ne reçoit plus d'avis de sécurité, c'est justement pour ça que la fin de vie est signalée.</p>
+  <div class="num">7</div>
+</section>
+
+<!-- 8. SECRET LIVE -->
+<section class="page">
+  <div class="tag">Exemple concret 5 · vérification en direct</div>
+  <h1>Une clé fuitée : incident ou ménage ?</h1>
+  <p class="lead">Une clé déjà révoquée, c'est du nettoyage d'historique. Une clé qui marche encore, c'est un incident. Avec <code>--verify-secrets</code>, Rempart pose la question au fournisseur.</p>
+  <svg viewBox="0 0 720 250" width="100%">
+    <g font-size="12.5">
+      <rect x="0" y="80" width="150" height="70" rx="10" fill="#fde2e2"/><text x="14" y="106" font-weight="700">Clé trouvée</text><text x="14" y="126" font-size="11" font-family="JetBrains Mono">ghp_************A5</text><text x="14" y="142" font-size="10.5" fill="#5c6370">jamais affichée en entier</text>
+      <rect x="230" y="80" width="200" height="70" rx="10" fill="#0f1222"/><text x="244" y="106" fill="#fff" font-weight="700">GET api.github.com/user</text><text x="244" y="126" fill="#c9cbe0" font-size="11">un seul appel « qui suis-je ? »</text><text x="244" y="142" fill="#c9cbe0" font-size="11">lecture seule</text>
+      <rect x="520" y="20" width="200" height="70" rx="10" fill="#d92d2d"/><text x="534" y="46" fill="#fff" font-weight="700">200 → ACTIVE</text><text x="534" y="66" fill="#ffe1e1" font-size="11">CRITICAL, confiance 100 %</text><text x="534" y="82" fill="#ffe1e1" font-size="11">« tourne-la maintenant »</text>
+      <rect x="520" y="140" width="200" height="70" rx="10" fill="#d9f2e8"/><text x="534" y="166" fill="#12805c" font-weight="700">401 → RÉVOQUÉE</text><text x="534" y="186" fill="#14161b" font-size="11">LOW : purge l'historique git</text>
+    </g>
+    <g stroke="#14161b" stroke-width="2" fill="none" marker-end="url(#ar3)"><path d="M152 115 H226"/><path d="M432 105 C470 105 480 55 516 55"/><path d="M432 125 C470 125 480 175 516 175"/></g>
+  </svg>
+  <h2>13 fournisseurs</h2>
+  <div style="margin-bottom:3mm"><span class="pill p-blue">AWS (STS)</span><span class="pill p-blue">GitHub</span><span class="pill p-blue">GitLab</span><span class="pill p-blue">Slack</span><span class="pill p-blue">Stripe live</span><span class="pill p-blue">Stripe test</span><span class="pill p-blue">OpenAI</span><span class="pill p-blue">Anthropic</span><span class="pill p-blue">Hugging Face</span><span class="pill p-blue">npm</span><span class="pill p-blue">SendGrid</span><span class="pill p-blue">DigitalOcean</span><span class="pill p-blue">Resend</span></div>
+  <div class="grid2">
+    <div class="card"><h3>Le cas AWS</h3><p>Il faut l'ID de clé <b>et</b> le secret à côté, puis signer la requête avec l'algorithme SigV4. Rempart le fait avec la seule bibliothèque standard Python, et un test vérifie que la signature est identique, octet pour octet, à celle de botocore.</p></div>
+    <div class="card"><h3>Règle d'éthique</h3><p>Uniquement sur tes propres dépôts. Rien n'est écrit avec la clé, rien n'est stocké : seule l'identité renvoyée (ex. « GitHub user octo ») apparaît.</p></div>
+  </div>
+  <h2>En pratique</h2>
+  <pre>$ rempart scan . --verify-secrets
+  CRIT  Hard-coded GitHub token  ci.sh:1
+        GitHub token found (ghp_************A5). VERIFIED LIVE: GitHub user octo. Rotate it now.
+        id 3c1e… · SEC-GITHUB-TOKEN · risk 90 · live-secret</pre>
+  <p class="small" style="margin-top:2mm">Exemple tiré des tests automatiques (jeton factice, réponse de GitHub simulée).</p>
+  <div class="num">8</div>
+</section>
+
+<!-- 9. AWS -->
+<section class="page">
+  <div class="tag">Exemple concret 6 · cloud en direct</div>
+  <h1>Ton compte AWS, tel qu'il est vraiment</h1>
+  <p class="lead">Terraform dit ce que l'infrastructure <i>devrait</i> être. <code>rempart cloud aws</code> regarde ce qu'elle <i>est</i>, en lecture seule, dans toutes les régions en parallèle.</p>
+  <div class="grid4">
+    <div class="card soft"><h3>Identités</h3><p>MFA du root, clés du root, mots de passe, MFA des utilisateurs, clés de plus de 90 jours, politiques *:*</p></div>
+    <div class="card soft"><h3>Stockage</h3><p>S3 public (ACL, politique, compte), HTTPS non imposé (87 % des comptes AWS en 2026)</p></div>
+    <div class="card soft"><h3>Réseau & calcul</h3><p>Ports SSH/BD ouverts (IPv4 et IPv6), IMDSv1, snapshots et AMI publics, flow logs</p></div>
+    <div class="card soft"><h3>Données</h3><p>RDS public, non chiffré, sans sauvegarde ; chiffrement EBS par défaut ; rotation KMS</p></div>
+    <div class="card soft"><h3>Détection</h3><p>CloudTrail multi-régions, GuardDuty, AWS Config, Access Analyzer</p></div>
+    <div class="card soft"><h3>Serverless</h3><p>URL Lambda sans auth, runtimes Lambda obsolètes</p></div>
+    <div class="card soft"><h3>Kubernetes</h3><p>Endpoint EKS ouvert à internet</p></div>
+    <div class="card" style="background:#0f1222;border:none"><div class="big" style="color:#fff">28</div><p style="color:#c9cbe0">contrôles · politique SecurityAudit suffisante</p></div>
+  </div>
+  <h2>Comment on sait que ça marche sans compte AWS</h2>
+  <svg viewBox="0 0 720 140" width="100%">
+    <g font-size="12.5">
+      <rect x="0" y="30" width="170" height="70" rx="10" fill="#ece6ff"/><text x="14" y="58" font-weight="700">Code Rempart</text><text x="14" y="78" font-size="11" fill="#5c6370">describe_security_groups()</text>
+      <rect x="260" y="30" width="200" height="70" rx="10" fill="#0f1222"/><text x="274" y="58" fill="#fff" font-weight="700">Stubber de botocore</text><text x="274" y="78" fill="#c9cbe0" font-size="11">compare au modèle officiel AWS</text>
+      <rect x="550" y="10" width="170" height="48" rx="10" fill="#d9f2e8"/><text x="564" y="39" fill="#12805c" font-weight="700">nom/paramètre OK</text>
+      <rect x="550" y="72" width="170" height="48" rx="10" fill="#fde2e2"/><text x="564" y="101" fill="#d92d2d" font-weight="700">erreur → test rouge</text>
+    </g>
+    <g stroke="#14161b" stroke-width="2" fill="none" marker-end="url(#ar3)"><path d="M172 65 H256"/><path d="M462 55 C500 55 510 34 546 34"/><path d="M462 75 C500 75 510 96 546 96"/></g>
+  </svg>
+  <div class="note"><b>Preuve que c'est strict :</b> le test a refusé une fausse URL Lambda parce qu'elle faisait 38 caractères au lieu des 40 minimum définis par AWS.</div>
+  <h2>En pratique</h2>
+  <pre>$ rempart cloud aws --profile prod
+AWS account 123456789012 · all enabled region(s) · read-only
+  CRIT  Root account without MFA                       aws://123456789012/iam/root
+  CRIT  Security group opens a database port to the internet   …/us-east-1/ec2/sg-1
+  HIGH  Running instance allows IMDSv1                  …/us-east-1/ec2/i-1
+  …
+■ attack-path
+  CRIT  SSRF can reach instance metadata credentials   (avec rempart scan . --aws)</pre>
+  <p class="small" style="margin-top:2mm">Forme de sortie produite par les tests (compte simulé 123456789012).</p>
+  <div class="num">9</div>
+</section>
+
+<!-- 10. AGENT -->
+<section class="page">
+  <div class="tag">L'agent IA</div>
+  <h1>Un relecteur qui lit le code pour toi</h1>
+  <p class="lead">Une règle voit un motif. Elle ne sait pas si <code>eval</code> reçoit une valeur d'une table constante. L'agent (un modèle d'IA d'Anthropic, famille Opus) va lire, chercher, puis trancher.</p>
+  <svg viewBox="0 0 720 270" width="100%">
+    <g font-size="12.5" font-weight="600">
+      <rect x="0" y="105" width="130" height="56" rx="10" fill="#ece6ff"/><text x="14" y="129">Scan</text><text x="14" y="148" font-size="11" fill="#5c6370" font-weight="400">15 cibles max</text>
+      <rect x="180" y="20" width="160" height="50" rx="10" fill="#dcebfb"/><text x="194" y="50">get_finding</text>
+      <rect x="180" y="80" width="160" height="50" rx="10" fill="#dcebfb"/><text x="194" y="110">search_code</text>
+      <rect x="180" y="140" width="160" height="50" rx="10" fill="#dcebfb"/><text x="194" y="170">read_file</text>
+      <rect x="400" y="60" width="160" height="56" rx="10" fill="#0f1222"/><text x="414" y="84" fill="#fff">record_verdict</text><text x="414" y="103" font-size="10.5" fill="#c9cbe0" font-weight="400">+ preuve fichier:ligne</text>
+      <rect x="400" y="140" width="160" height="56" rx="10" fill="#0f1222"/><text x="414" y="164" fill="#fff">propose_fix</text><text x="414" y="183" font-size="10.5" fill="#c9cbe0" font-weight="400">remplacement exact</text>
+      <rect x="600" y="60" width="120" height="136" rx="10" fill="#d9f2e8"/><text x="612" y="88" fill="#12805c">Rapport</text><text x="612" y="110" font-size="11" fill="#14161b" font-weight="400">confirmé</text><text x="612" y="128" font-size="11" fill="#14161b" font-weight="400">faux positif</text><text x="612" y="146" font-size="11" fill="#14161b" font-weight="400">incertain</text><text x="612" y="172" font-size="11" fill="#14161b" font-weight="400">+ fichier .patch</text>
+    </g>
+    <g stroke="#9aa1ad" stroke-width="2" fill="none" marker-end="url(#ar)"><path d="M132 133 C155 133 155 45 176 45"/><path d="M132 133 C155 133 155 105 176 105"/><path d="M132 133 C155 133 155 165 176 165"/><path d="M342 105 H396"/><path d="M342 165 H396"/><path d="M562 88 H596"/><path d="M562 168 H596"/></g>
+    <text x="180" y="225" font-size="11" fill="#5c6370">l'agent boucle : il lit, cherche, relit… jusqu'à avoir un verdict pour chaque cible (40 tours max)</text>
+  </svg>
+  <div class="grid2">
+    <div class="card"><h3>Exemple de verdict réel (test)</h3><p><span class="pill p-ok">faux positif</span> « eval ne reçoit que des valeurs de la table constante OPS ; l'utilisateur choisit seulement la clé. » <span class="mono">app.py:4,8</span></p><p style="margin-top:2mm"><span class="pill p-crit">confirmé</span> « request.args['d'] est concaténé dans une commande shell. » <span class="mono">app.py:12</span></p></div>
+    <div class="card"><h3>4 garde-fous</h3><p>① lecture seule, sur les fichiers du scan uniquement<br>② le contenu du dépôt est « non fiable » (anti prompt-injection)<br>③ boucle bornée + repli automatique si le modèle refuse<br>④ il ne supprime jamais un résultat</p></div>
+  </div>
+  <div class="note"><b>Coût affiché à la fin</b> (tokens et dollars estimés). Il envoie des extraits de ton code à l'API Anthropic : à ne pas utiliser sur du code que tu n'as pas le droit de partager.</div>
+  <div class="num">10</div>
+</section>
+
+<!-- 11. MCP -->
+<section class="page">
+  <div class="tag">Rempart dans ton éditeur</div>
+  <h1>MCP : ton assistant de code peut l'appeler</h1>
+  <p class="lead">MCP (Model Context Protocol) est la prise standard qui permet à un assistant IA d'utiliser des outils. Rempart en est un.</p>
+  <svg viewBox="0 0 720 300" width="100%">
+    <g font-size="12.5" font-weight="700"><rect x="40" y="0" width="200" height="40" rx="8" fill="#ece6ff"/><text x="140" y="25" text-anchor="middle">Assistant IA (Cursor…)</text><rect x="480" y="0" width="200" height="40" rx="8" fill="#0f1222"/><text x="580" y="25" text-anchor="middle" fill="#fff">rempart mcp</text></g>
+    <g stroke="#cfd3da" stroke-dasharray="4 4"><path d="M140 40 V290"/><path d="M580 40 V290"/></g>
+    <g font-size="11.5" font-family="JetBrains Mono">
+      <path d="M140 75 H574" stroke="#14161b" stroke-width="1.6" marker-end="url(#ar3)"/><text x="160" y="68">initialize</text>
+      <path d="M580 105 H146" stroke="#9aa1ad" stroke-width="1.6" marker-end="url(#ar)"/><text x="360" y="98">6 outils disponibles</text>
+      <path d="M140 145 H574" stroke="#14161b" stroke-width="1.6" marker-end="url(#ar3)"/><text x="160" y="138">rempart_scan { path: "." }</text>
+      <path d="M580 175 H146" stroke="#9aa1ad" stroke-width="1.6" marker-end="url(#ar)"/><text x="330" y="168">note F · 5 chemins d'attaque</text>
+      <path d="M140 215 H574" stroke="#14161b" stroke-width="1.6" marker-end="url(#ar3)"/><text x="160" y="208">rempart_finding { id: "f57eb93cca" }</text>
+      <path d="M140 265 H574" stroke="#14161b" stroke-width="1.6" marker-end="url(#ar3)"/><text x="160" y="258">rempart_triage { verdict: "tp" }</text>
+    </g>
+  </svg>
+  <h2>À mettre dans <code>.mcp.json</code></h2>
+  <pre>{ "mcpServers": { "rempart": { "command": "rempart", "args": ["mcp"] } } }</pre>
+  <div class="grid3" style="margin-top:5mm">
+    <div class="card soft"><h3>rempart_scan</h3><p>scanne un dossier</p></div>
+    <div class="card soft"><h3>rempart_finding</h3><p>détail + correctif</p></div>
+    <div class="card soft"><h3>rempart_triage</h3><p>enregistre un verdict</p></div>
+    <div class="card soft"><h3>rempart_web_audit</h3><p>audite un site</p></div>
+    <div class="card soft"><h3>rempart_image_scan</h3><p>analyse une image</p></div>
+    <div class="card soft"><h3>rempart_rules</h3><p>liste les règles</p></div>
+  </div>
+  <div class="num">11</div>
+</section>
+
+<!-- 12. APPRENTISSAGE -->
+<section class="page">
+  <div class="tag">Il apprend</div>
+  <h1>Chaque verdict rend l'outil plus précis</h1>
+  <p class="lead">Chaque règle a une « confiance de départ ». Tes verdicts la font monter ou descendre. C'est une formule bayésienne simple, mesurée sur un vrai essai.</p>
+  <svg viewBox="0 0 720 262" width="100%">
+    <g font-size="12.5">
+      <text x="0" y="18" font-weight="700">IDOR (règle volontairement prudente)</text>
+      <rect x="0" y="30" width="600" height="22" rx="11" fill="#f5f6f8"/><rect x="0" y="30" width="210" height="22" rx="11" fill="#9ec5f4"/><text x="610" y="46" font-weight="700">35 %</text><text x="0" y="70" font-size="11" fill="#5c6370">au départ</text>
+      <rect x="0" y="80" width="600" height="22" rx="11" fill="#f5f6f8"/><rect x="0" y="80" width="168" height="22" rx="11" fill="#2a78d6"/><text x="610" y="96" font-weight="700">28 %</text><text x="0" y="120" font-size="11" fill="#5c6370">après 1 faux positif marqué par toi</text>
+      <text x="0" y="158" font-weight="700">IAM « *:* » (règle fiable)</text>
+      <rect x="0" y="170" width="600" height="22" rx="11" fill="#f5f6f8"/><rect x="0" y="170" width="510" height="22" rx="11" fill="#9ec5f4"/><text x="610" y="186" font-weight="700">85 %</text>
+      <text x="0" y="208" font-size="11" fill="#5c6370">au départ</text>
+      <rect x="0" y="216" width="600" height="22" rx="11" fill="#f5f6f8"/><rect x="0" y="216" width="528" height="22" rx="11" fill="#2a78d6"/><text x="610" y="232" font-weight="700">88 %</text><text x="0" y="256" font-size="11" fill="#5c6370">après 1 vrai positif confirmé</text>
+    </g>
+  </svg>
+  <pre style="margin-top:4mm">rempart triage f26cf13b27 --fp --note "contrôle d'accès dans le middleware"
+rempart triage c54d4f3be8 --tp
+rempart learn          <span class="c"># ce que l'outil a appris, règle par règle</span>
+rempart history        <span class="c"># évolution de la note, nouveaux / corrigés, temps moyen de correction</span></pre>
+  <div class="grid3" style="margin-top:5mm">
+    <div class="card"><h3>Toi = décision</h3><p>Un faux positif que tu marques disparaît des scans suivants de ce projet.</p></div>
+    <div class="card"><h3>L'IA = indice</h3><p>Un verdict de l'agent compte 0,5 et ne peut jamais fermer un résultat ni écraser le tien.</p></div>
+    <div class="card"><h3>Règle bruyante</h3><p>5 faux positifs et moins de 25 % de précision : la sévérité baisse d'un cran automatiquement.</p></div>
+  </div>
+  <div class="num">12</div>
+</section>
+
+<!-- 13. FIABILITÉ -->
+<section class="page">
+  <div class="tag">La méthode</div>
+  <h1>Comment on l'a rendu fiable</h1>
+  <p class="lead">Un scanner qui crie au loup tout le temps finit ignoré. La règle suivie : scanner de vrais projets, vérifier chaque alerte à la main, corriger, puis figer le cas dans un test.</p>
+  <svg viewBox="0 0 720 150" width="100%">
+    <g font-size="12.5" font-weight="700">
+      <circle cx="80" cy="75" r="56" fill="#ece6ff"/><text x="80" y="80" text-anchor="middle">scanner</text>
+      <circle cx="260" cy="75" r="56" fill="#dcebfb"/><text x="260" y="80" text-anchor="middle">vérifier</text>
+      <circle cx="440" cy="75" r="56" fill="#ffe8d9"/><text x="440" y="80" text-anchor="middle">corriger</text>
+      <circle cx="620" cy="75" r="56" fill="#d9f2e8"/><text x="620" y="80" text-anchor="middle">tester</text>
+    </g>
+    <g stroke="#14161b" stroke-width="2" marker-end="url(#ar3)"><path d="M138 75 H200"/><path d="M318 75 H380"/><path d="M498 75 H560"/></g>
+  </svg>
+  <table>
+    <tr><th>Ce qui a été signalé</th><th>Pourquoi c'était faux</th><th>La correction</th></tr>
+    <tr><td><code>httpOnly: false</code> sur un cookie (Carriv)</td><td>cookie de langue, pas de session</td><td>exiger un contexte « session/auth » autour</td></tr>
+    <tr><td><code>{@html tag}</code> en Svelte (Carriv)</td><td>JSON-LD déjà échappé (<code>&#92;u003c</code>)</td><td>ignorer si le fichier échappe</td></tr>
+    <tr><td><code>/^[^\s.]+(\.[^\s.]+)+$/</code> « ReDoS »</td><td>le point sépare : un seul découpage</td><td>analyse des séparateurs</td></tr>
+    <tr><td><code>/Bearer/.exec(header)</code> « injection »</td><td>RegExp.exec ≠ child_process.exec</td><td>exiger l'import de child_process</td></tr>
+    <tr><td><code>verdicts.get(x)</code> « N+1 »</td><td>dictionnaire, pas base de données</td><td><code>.get</code> seulement sur un ORM</td></tr>
+  </table>
+  <div class="grid3" style="margin-top:6mm">
+    <div class="card soft"><div class="big">9/9</div><p>pièges trouvés dans le labo AWS de cspm-lite (dont 3 manqués au début, corrigés)</p></div>
+    <div class="card soft"><div class="big">A</div><p>note de Rempart sur son propre code ; la CI échoue au moindre « high »</p></div>
+    <div class="card soft"><div class="big">0</div><p>test sauté en CI : boto3 et le SDK sont installés, tout est exécuté</p></div>
+  </div>
+  <div class="num">13</div>
+</section>
+
+<!-- 14. GLOSSAIRE -->
+<section class="page">
+  <div class="tag">Le vocabulaire</div>
+  <h1>Glossaire visuel</h1>
+  <p class="lead">Les mots que tu entendras en entrevue, en une ligne chacun.</p>
+  <div class="grid2">
+    <div class="card"><h3>SAST</h3><p>Analyse statique : lire le code sans l'exécuter.</p></div>
+    <div class="card"><h3>SCA</h3><p>Analyse des dépendances : quelles bibliothèques, quelles versions, quelles failles connues.</p></div>
+    <div class="card"><h3>CVE / CWE</h3><p>CVE = une faille précise (CVE-2025-55182). CWE = la famille de faille (CWE-89 = injection SQL).</p></div>
+    <div class="card"><h3>CVSS · EPSS · KEV</h3><p>Gravité théorique · probabilité d'exploitation · preuve d'exploitation réelle.</p></div>
+    <div class="card"><h3>Taint (souillure)</h3><p>Marquer une donnée venant de l'utilisateur et la suivre jusqu'à un endroit dangereux.</p></div>
+    <div class="card"><h3>SSRF</h3><p>Faire envoyer au serveur une requête vers une adresse choisie par l'attaquant.</p></div>
+    <div class="card"><h3>IMDS (v1 / v2)</h3><p>Service interne d'EC2 qui donne les clés du rôle. v2 exige un jeton : bloque les SSRF simples.</p></div>
+    <div class="card"><h3>RLS</h3><p>Row Level Security : la base filtre les lignes selon l'utilisateur (Supabase).</p></div>
+    <div class="card"><h3>IaC</h3><p>Infrastructure décrite en code (Terraform) : on peut la scanner avant de la créer.</p></div>
+    <div class="card"><h3>SARIF</h3><p>Format standard de résultats de sécurité, affiché par GitHub dans l'onglet Security.</p></div>
+    <div class="card"><h3>MCP</h3><p>Protocole qui permet à un assistant IA d'appeler des outils comme Rempart.</p></div>
+    <div class="card"><h3>EOL</h3><p>End of life : version qui ne reçoit plus de correctifs de sécurité.</p></div>
+    <div class="card"><h3>Whiteout</h3><p>Fichier spécial <code>.wh.nom</code> qui supprime un fichier d'une couche d'image précédente.</p></div>
+    <div class="card"><h3>Faux positif</h3><p>Alerte sur du code sûr. L'ennemi n°1 d'un scanner.</p></div>
+  </div>
+  <div class="num">14</div>
+</section>
+
+<!-- 15. PISTES -->
+<section class="page">
+  <div class="tag">La suite</div>
+  <h1>Pistes de développement</h1>
+  <p class="lead">Classées par horizon. Chaque piste dit ce qu'elle débloque.</p>
+  <svg viewBox="0 0 720 40" width="100%"><rect x="0" y="16" width="720" height="8" rx="4" fill="#e3e6eb"/><circle cx="60" cy="20" r="10" fill="#6d4aff"/><circle cx="360" cy="20" r="10" fill="#2a78d6"/><circle cx="660" cy="20" r="10" fill="#12805c"/></svg>
+  <div class="grid3">
+    <div class="card"><span class="pill p-brand">1–2 mois</span><h3>Profondeur</h3><p>
+      <b>Mode baseline</b> : ne montrer que ce qu'une PR ajoute.<br><br>
+      <b>Secrets dans l'historique git</b> : les clés supprimées restent récupérables.<br><br>
+      <b>Graphe par ressource</b> : relier « ce groupe de sécurité protège cette instance qui exécute cette image ».<br><br>
+      <b>Corpus d'évaluation de l'agent</b> : mesurer sa précision règle par règle.</p></div>
+    <div class="card"><span class="pill p-blue">3–6 mois</span><h3>Largeur</h3><p>
+      <b>GCP et Azure en direct</b>, comme AWS.<br><br>
+      <b>Flux entre fonctions</b> : résumés « paramètre → puits ».<br><br>
+      <b>Images RPM, binaires Go, JAR</b>.<br><br>
+      <b>Politique « cooldown »</b> : refuser un paquet publié il y a moins de N jours, la seule parade aux vers avec provenance valide.</p></div>
+    <div class="card"><span class="pill p-ok">6–12 mois</span><h3>Produit</h3><p>
+      <b>Publication PyPI</b> et pre-commit.<br><br>
+      <b>Tableau de bord web</b> multi-projets avec historique.<br><br>
+      <b>Scans planifiés</b> : un agent qui tourne chaque nuit et ouvre des PR de correctif.<br><br>
+      <b>Version équipe</b> : calibration partagée, intégration Slack, SSO.</p></div>
+  </div>
+  <div class="note"><b>Pour ta carrière :</b> chaque piste est un sujet d'entrevue. Le graphe d'attaque parle aux équipes cloud, le flux entre fonctions aux équipes AppSec, le tableau de bord aux équipes produit.</div>
+  <div class="num">15</div>
+</section>
+
+<!-- 16. AIDE-MÉMOIRE -->
+<section class="page">
+  <div class="tag">Aide-mémoire</div>
+  <h1>Les commandes à connaître</h1>
+  <p class="lead">Garde cette page sous la main.</p>
+  <table>
+    <tr><th style="width:52%">Commande</th><th>Ce qu'elle fait</th></tr>
+    <tr><td><code>rempart scan .</code></td><td>scanne le dépôt courant</td></tr>
+    <tr><td><code>rempart scan . -v</code></td><td>avec le correctif et les référentiels</td></tr>
+    <tr><td><code>rempart scan . -f html -o rapport.html</code></td><td>rapport HTML filtrable</td></tr>
+    <tr><td><code>rempart scan . --fail-on high</code></td><td>code de sortie 1 s'il y a du « high » (CI)</td></tr>
+    <tr><td><code>rempart scan . --aws --image app:latest</code></td><td>code + AWS + image, corrélés</td></tr>
+    <tr><td><code>rempart scan . --verify-secrets</code></td><td>teste si les clés trouvées marchent encore</td></tr>
+    <tr><td><code>rempart image python:3.12-slim</code></td><td>analyse une image sans Docker</td></tr>
+    <tr><td><code>rempart cloud aws --profile prod</code></td><td>audit AWS en direct</td></tr>
+    <tr><td><code>rempart k8s --context prod</code></td><td>audit du cluster</td></tr>
+    <tr><td><code>rempart web https://carriv.com</code></td><td>audit passif de ton site</td></tr>
+    <tr><td><code>rempart agent .</code></td><td>l'IA vérifie et propose des correctifs</td></tr>
+    <tr><td><code>rempart triage &lt;id&gt; --fp | --tp | --accept</code></td><td>apprendre à l'outil</td></tr>
+    <tr><td><code>rempart learn</code> · <code>rempart history</code></td><td>ce qu'il a appris · ta progression</td></tr>
+    <tr><td><code>rempart mcp</code></td><td>serveur pour assistants de code IA</td></tr>
+    <tr><td><code>rempart rules --domain data</code></td><td>liste des règles d'un domaine</td></tr>
+  </table>
+  <div class="grid2" style="margin-top:7mm">
+    <div class="card"><h3>Ignorer une alerte précise</h3><pre style="margin-top:2mm">eval(x)  # rempart:ignore[CODE-EVAL]</pre></div>
+    <div class="card"><h3>Configurer un projet</h3><pre style="margin-top:2mm">.rempart.toml
+exclude = ["fixtures/**"]
+fail_on = "high"</pre></div>
+  </div>
+  <div class="num">16</div>
+</section>
+
+</body>
+</html>

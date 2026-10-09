@@ -1,160 +1,213 @@
-# Rempart
+<p align="center">
+  <img src="docs/assets/banner.png" alt="Rempart — the security scanner that thinks in attack paths" width="100%">
+</p>
 
-**A security scanner that thinks in attack paths. One tool covers your code, dependencies, container images, live AWS account and Kubernetes cluster, data stores, CI/CD pipelines and AI agents. It verifies what it finds, an AI agent reads the code to confirm or reject each finding, and it learns from your triage.**
+<p align="center">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-6d4aff?style=for-the-badge"></a>
+  <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
+  <a href="tests"><img alt="79 tests" src="https://img.shields.io/badge/tests-79%20passing-12805c?style=for-the-badge"></a>
+  <a href="docs/RULES.md"><img alt="268 rules" src="https://img.shields.io/badge/rules-268-2a78d6?style=for-the-badge"></a>
+  <a href="docs/THREAT_CATALOG.md"><img alt="OWASP 2025" src="https://img.shields.io/badge/OWASP%20Top%2010-2025-14161b?style=for-the-badge"></a>
+  <a href="#-plug-it-into-your-ai-coding-assistant-mcp"><img alt="MCP server" src="https://img.shields.io/badge/MCP-server-e8590c?style=for-the-badge"></a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)](tests)
-[![Rules](https://img.shields.io/badge/rules-268-7c5cff)](docs/RULES.md)
-[![OWASP](https://img.shields.io/badge/OWASP%20Top%2010-2025-black)](docs/THREAT_CATALOG.md)
-[![MCP](https://img.shields.io/badge/MCP-server-orange)](#use-it-from-any-ai-coding-assistant-mcp)
+<p align="center">
+  <b>One scan across code, dependencies, container images, your live AWS account and Kubernetes cluster, data stores, CI/CD and AI agents.<br>
+  Findings are correlated into attack paths, every result says how it was proven, an AI agent reviews the code behind them, and the tool learns from your triage.</b>
+</p>
 
-*Rempart* is French for *rampart*: the wall you build before anyone attacks.
+<p align="center">
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-how-it-thinks">How it thinks</a> ·
+  <a href="#-attack-paths">Attack paths</a> ·
+  <a href="#-the-ai-verification-agent">AI agent</a> ·
+  <a href="#%EF%B8%8F-coverage">Coverage</a> ·
+  <a href="docs/THREAT_CATALOG.md">Threat research</a> ·
+  <a href="learning/rempart-guide.pdf">Illustrated guide (FR)</a>
+</p>
 
 ---
 
-## Why
+<p align="center">
+  <img src="docs/assets/demo-scan.png" alt="Real output of rempart scan on the intentionally vulnerable demo app" width="92%">
+  <br><sub>Real output on <code>examples/vulnerable-app</code>: five attack paths found before any single finding is listed.</sub>
+</p>
 
-A modern app is not one attack surface but eight. There is the code and its hundreds of npm packages, the container image it ships in, the Terraform and the live AWS account it runs on, and the Kubernetes cluster. There is also the GitHub workflow that deploys it, the Supabase or MongoDB that holds its users, and now the MCP servers and LLM calls wired into it. Each has its own scanner, report format and flood of "HIGH" findings, so solo developers and small teams run none of them.
+## ✨ Why Rempart
 
-Real incidents are also **chains**, not single findings. An SSRF is "high" and IMDSv1 is "high". SSRF *plus* IMDSv1 on the same deployment is how the 2019 Capital One breach reached 100 million records.
+<table>
+<tr>
+<td width="33%" valign="top">
 
-Rempart answers four questions in one pass:
+### 🧭 Thinks in chains
+An SSRF is "high". IMDSv1 is "high". Together they are the **2019 Capital One breach**. Rempart joins findings from different domains into **9 attack-path patterns** and names the cheapest link to break.
 
-1. **What is exploitable, and how?** Findings from every source are correlated into **attack paths** (9 chain patterns), each naming every link and the cheapest one to break.
-2. **Is it real?** Every finding states *how* it was established: pattern match, data flow, imported dependency, live observation, live-verified secret, or AI review of the code.
-3. **What matters first?** Dependency and OS-package CVEs come from OSV.dev and are ranked by exploitation evidence. CISA KEV marks confirmed in-the-wild use and FIRST EPSS gives the predicted probability.
-4. **Is it getting better?** Scans are recorded locally, and triage verdicts recalibrate every rule.
+</td>
+<td width="33%" valign="top">
 
-## Quick start
+### 🔬 Proves what it says
+Every finding carries a **verification level**: pattern, data flow, imported dependency, live observation, live-verified secret, or AI review. CVEs are ranked by **real exploitation** (CISA KEV, FIRST EPSS), not CVSS alone.
+
+</td>
+<td width="33%" valign="top">
+
+### 🧠 Gets sharper with use
+Mark a result true or false and each rule's precision is recalibrated across all your projects. An **AI agent** reads the code to confirm or reject findings, and it can never close one. Only you can.
+
+</td>
+</tr>
+</table>
+
+## 🚀 Quick start
 
 ```bash
-pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # [aws] boto3, [ai] Anthropic SDK
-
-rempart scan .                                   # code, secrets, deps, IaC, CI/CD, data, AI configs
-rempart scan . --aws --image myorg/api:latest    # + live AWS account + container image, correlated together
-rempart image python:3.9-slim                    # any registry image or docker-save tar, no Docker needed
-rempart cloud aws --profile prod                 # live read-only AWS audit (SecurityAudit policy is enough)
-rempart k8s --context prod                       # live cluster audit through kubectl (never reads Secrets)
-rempart web https://your-site.example            # passive audit of a site you own
-rempart agent .                                  # an AI agent verifies each high-risk finding by reading the code
-rempart scan examples/vulnerable-app --offline   # see every domain fire on the demo app
+pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # extras: [aws] boto3 · [ai] Anthropic SDK
 ```
 
-The core needs only Python 3.11 and PyYAML. boto3 and the Anthropic SDK are optional extras.
-
-## What a scan looks like
-
-```
-$ rempart scan examples/vulnerable-app --offline --limit 4
-  Posture score 1/100  grade F
-  17 critical  15 high  17 medium  10 low  1 info
-
-■ attack-path (5)
-   CRIT  Code execution would escape the container to the host  api/app.py:14
-         Links → code execution: CODE-CMD-INJECTION at api/app.py:14 (+1 more)
-               | container isolation disabled: K8S-PRIVILEGED at k8s/deployment.yaml:13 (+2 more)
-   CRIT  SSRF can reach instance metadata credentials  api/app.py:31
-         Links → request forgery: CODE-SSRF at api/app.py:31 | metadata v1 reachable: TF-EC2-IMDSV1 at infra/main.tf:26
-   CRIT  Internet-reachable data store with weak protection  infra/main.tf:5
-         Links → reachable from the internet: TF-NET-DATA-PORT-OPEN at infra/main.tf:5 (+2 more)
-               | weak authentication or encryption: DATA-MONGODB-EXPOSED at docker-compose.yml:4 (+1 more)
-```
-
-Dependency and image findings carry exploitation evidence and reachability (real output):
-
-```
-CRITICAL  react-server-dom-webpack@19.0.0: CVE-2025-55182 — React Server Components are Vulnerable to RCE
-          — fixed in 19.0.1, 19.1.2, 19.2.1 — exploited in the wild (CISA KEV) — transitive, not imported directly
-HIGH      lodash@4.17.15: CVE-2021-23337 — Command Injection in lodash — fixed in 4.17.21 — EPSS 21% — imported by your code
-HIGH      python 3.9.25 reached end-of-life on 2025-10-31.          (rempart image python:3.9-slim)
-```
-
-## How it is intelligent
-
-| Capability | What it does |
+| You want to… | Run |
 |---|---|
-| **Attack-path correlation** | Nine chain patterns join findings across domains: SSRF → IMDSv1 credentials, exposed data store × weak auth, PR-controlled CI × publish credentials (TanStack 2026), RCE × privileged container, missing RLS × public client key, debug server × public bind, XSS × script-readable tokens, admin IAM × credential leak, install-time code × publish token (Shai-Hulud). Live AWS findings take part too. |
-| **Data flow** | Python is analysed on its AST with per-function taint: values from `request.*` or FastAPI route parameters, and strings built by interpolation, are followed through assignments to SQL, shell, HTTP, file, redirect and regex sinks. JS/TS tracks variables from `req.*`, `request.json()`, `searchParams`, and destructuring. |
-| **Reachability** | Each vulnerable dependency is classified *imported by your code*, *declared but not imported*, or *transitive and not imported*, and confidence follows. |
-| **Live verification** | `--verify-secrets` asks each provider's read-only identity endpoint (GitHub `/user`, Stripe `/v1/account`, AWS STS `GetCallerIdentity` signed with a stdlib SigV4 implementation tested against botocore…) whether a leaked key still works. Live means CRITICAL. Revoked means LOW, purge the history. |
-| **AI verification agent** | `rempart agent` gives an LLM read-only tools over the repository. It confirms or rejects each finding with file:line evidence and proposes minimal fixes as a patch. |
-| **Learning loop** | Your verdicts update a Beta-Bernoulli precision per rule, shared across projects. AI verdicts count half and can never close a finding. Only a human can. |
+| Scan a repository | `rempart scan .` |
+| See every domain fire on a demo app | `rempart scan examples/vulnerable-app --offline` |
+| Correlate code **and** production | `rempart scan . --aws --image myorg/api:latest` |
+| Audit a container image, **no Docker needed** | `rempart image python:3.9-slim` |
+| Audit your live AWS account (read-only) | `rempart cloud aws --profile prod` |
+| Audit a live Kubernetes cluster | `rempart k8s --context prod` |
+| Check whether leaked keys still work | `rempart scan . --verify-secrets` |
+| Audit a website you own (passive) | `rempart web https://your-site.example` |
+| Let the AI agent verify and fix | `rempart agent .` |
+| Gate CI on severity | `rempart scan . --fail-on high -f sarif -o rempart.sarif` |
 
-Every finding carries its **verification level**: `static` · `reachable` · `declared` · `not-imported` · `observed` (live AWS / cluster / image / site) · `live-secret` · `revoked-secret` · `correlated` · `ai-confirmed` · `ai-rejected` · `ai-uncertain`.
+The core needs only Python 3.11 and PyYAML. No account, no telemetry.
 
-## What it covers
+## 🧩 How it thinks
 
-| Domain | Examples | Frameworks |
-|---|---|---|
-| **Code (SAST)** | Injection (SQL, NoSQL, OS command, code, template), XSS sinks, SSRF, path traversal, open redirect, deserialization, JWT `none`, weak crypto, mass assignment, CORS with credentials, uploads, ReDoS, Trojan Source, IDOR review queue. Python AST + JS/TS/Svelte/Vue, Go, Java/Kotlin, PHP, Ruby, C#, C/C++ | OWASP A01–A10:2025, CWE Top 25 2025 |
-| **Secrets** | 25 provider token formats, private keys, entropy-filtered generic secrets, committed `.env`/key files. Optional live verification for 13 providers | CWE-798 |
-| **Dependencies & supply chain** | 12 lockfile formats → OSV + KEV + EPSS, malicious releases, install scripts, typosquats, dependency confusion, unpinned/HTTP sources | A03:2025, CICD-SEC-3 |
-| **Container images** | Registry pull without Docker (Docker Hub, GHCR, OCI), whiteout-aware layer merge, dpkg (incl. distroless) and apk packages via OSV Debian/Ubuntu/Alpine, Python and npm packages inside the image, EOL OS and runtimes, secrets in files/ENV/history, root user, age | A03/A06:2025 |
-| **Live AWS** | 28 read-only checks: root MFA/keys, password policy, credential report (MFA, key age, unused), `*:*` policies, admin users, S3 public access and TLS enforcement, open security groups (IPv4/IPv6), IMDSv1, EBS default encryption, public snapshots/AMIs, flow logs, RDS exposure/encryption/backups, CloudTrail, GuardDuty, Config, KMS rotation, Lambda URLs and runtimes, EKS endpoints, Access Analyzer | CIS AWS Foundations |
-| **Kubernetes** | Manifests and live clusters: privileged pods, host namespaces, hostPath, capabilities, RBAC wildcards and escalation verbs, cluster-admin bindings, exposed data services | OWASP K8s Top 10 (2025), Pod Security Standards |
-| **IaC** | Terraform for AWS, GCP and Azure (incl. `jsonencode()` policies): public storage, open ports, wildcard IAM, IMDSv1, encryption, public DBs, TLS, audit trails, state committed | CIS, A02/A04:2025 |
-| **CI/CD** | Pwn requests, script injection, unpinned actions, cache poisoning, OIDC on untrusted triggers, secrets echoed, long-lived publish tokens | OWASP CICD-SEC-1…10 |
-| **Data** | Credentials in connection strings, DB without TLS, exposed MongoDB/Redis/Postgres/MySQL/Elasticsearch, Supabase RLS, Firebase rules, Atlas 0.0.0.0/0, SQL grants, PII and cards committed, sensitive logging | Québec Law 25, PIPEDA, GDPR, PCI DSS |
-| **AI & agents** | Unpinned MCP servers, secrets in MCP configs, broad shell/filesystem servers, invisible Unicode in `AGENTS.md`/rules files, LLM output to `eval`/HTML/SQL, shell-executing agent tools, prompts built from user input | OWASP LLM 2025, Agentic 2026 |
-| **Quality & performance** | Fail-open authorization, swallowed exceptions, N+1 queries, missing timeouts, unbounded queries, blocking I/O, complexity | A10:2025, CWE-400/770 |
-| **Web (passive)** | HTTPS, HSTS, CSP, framing, cookies, CORS, banners, legacy TLS, certificate expiry, `security.txt`, warm/cold TTFB | A02/A04/A07:2025 |
-
-The research behind every rule, with the 2025-2026 incidents that motivated it and an honest list of what static analysis cannot see, is in **[docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md)**. All rules: [docs/RULES.md](docs/RULES.md).
-
-## The AI verification agent
-
-```bash
-export ANTHROPIC_API_KEY=...            # or an `ant auth login` profile
-rempart agent . --max-findings 15       # report: rempart-agent-report.md, fixes: rempart-fixes.patch
-rempart agent . --apply                 # also write the proposed fixes (review with git diff)
+```mermaid
+flowchart LR
+    IN["WHAT IT READS<br/>repository · container image<br/>live AWS · Kubernetes · website"]
+    SC["13 SCANNERS<br/>268 rules · 16 domains"]
+    IQ["INTELLIGENCE<br/>data flow · reachability<br/>live verification · attack paths<br/>AI agent · learning"]
+    OUT["OUTPUTS<br/>terminal · HTML · SARIF<br/>JSON · Markdown · MCP"]
+    IN --> SC --> IQ --> OUT
+    style IN fill:#ece6ff,stroke:#6d4aff,color:#14161b
+    style SC fill:#0f1222,stroke:#0f1222,color:#ffffff
+    style IQ fill:#dcebfb,stroke:#2a78d6,color:#14161b
+    style OUT fill:#d9f2e8,stroke:#12805c,color:#14161b
 ```
 
-Static rules cannot read intent. Is that `eval` fed by a constant table? Is that IDOR candidate guarded by middleware three files away? The agent answers those questions the way a reviewer would. It uses the newest Opus-tier model available to your Anthropic API key, or the one you set with `--model` / `REMPART_MODEL`. Its tools are `list_findings`, `get_finding`, `read_file`, `search_code`, `record_verdict` and `propose_fix`. Each verdict cites file:line evidence. Each fix is an exact search-and-replace rendered as a unified diff.
+| Layer | Example |
+|---|---|
+| **Data flow** | `user_id = request.args["id"]` → `q = f"...{user_id}"` → `cur.execute(q)` is flagged even though the sink line looks clean. Python is analysed on its AST per function, including FastAPI parameters. JS/TS variables are tracked from `req.*`, `request.json()` and `searchParams`. |
+| **Reachability** | `lodash@4.17.15 … imported by your code` vs `react-server-dom-webpack … transitive, not imported directly` |
+| **Live verification** | A GitHub token found in `ci.sh` is checked against `api.github.com/user`. The verdict is `VERIFIED LIVE: GitHub user octo` (CRITICAL) or `revoked` (LOW). It covers 13 providers, including AWS STS through a stdlib SigV4 signer tested byte-for-byte against botocore. |
+| **Correlation** | `CODE-SSRF` in `api/app.py` combined with `TF-EC2-IMDSV1` in `infra/main.tf` → `CHAIN-SSRF-TO-CLOUD-CREDENTIALS` |
+| **AI agent** | "False positive: `eval` only receives values from the constant `OPS` table; user input selects a key (`app.py:4,8`)." |
+| **Learning** | IDOR rule: 35 % → 28 % after one false positive. Wildcard-IAM rule: 85 % → 88 % after one confirmation. |
 
-Safety by construction:
+## 🧨 Attack paths
 
-- It can only read files the scan discovered. Path escapes are refused, and there is no tool to execute code, reach the network or write.
-- Repository content is treated as untrusted data, a defence against prompt injection planted in comments or READMEs.
-- The loop is bounded (turns, findings). Server-side refusal fallback keeps one declined request from aborting the run.
-- AI verdicts lower or raise confidence but never delete a finding. They count half in the learning loop and never override a human verdict.
+```mermaid
+flowchart LR
+    X((Attacker)) -->|crafted URL| S["① SSRF<br/>api/app.py:31"]
+    S -->|GET 169.254.169.254| M["② IMDSv1 allowed<br/>infra/main.tf:26"]
+    M --> C["③ Instance-role<br/>credentials stolen"]
+    M -.-|cheapest fix| F["http_tokens = required"]
+    style C fill:#d92d2d,color:#fff
+    style F fill:#d9f2e8,color:#12805c
+```
 
-The agent is tested against the real Anthropic Python SDK with a mocked HTTP transport. The tests assert the exact request bodies: model, strict tool schemas, fallback header, append-only history, and a tool result for every tool call.
+| Pattern | Links | Real-world reference |
+|---|---|---|
+| SSRF → cloud credentials | SSRF × IMDSv1 (Terraform or live) | Capital One, 2019 |
+| Exposed data store | public port / DB × no auth or encryption | MongoDB wipe-and-ransom waves, 2026 |
+| Untrusted CI → release | pwn request / script injection × publish power | TanStack, May 2026 |
+| RCE → host | RCE-class bug or KEV CVE × privileged container, socket, hostPath | container escapes |
+| Public BaaS table | missing RLS / open Firebase rules × client key in front-end | Supabase / Firebase leaks |
+| Debug console exposed | debug mode × bind on 0.0.0.0 | Werkzeug console |
+| XSS → session theft | XSS sink × script-readable tokens | session hijacking |
+| Admin credentials exposed | `*:*` / AdministratorAccess × key leak path | account takeover |
+| Worm propagation | install-time code × publish token | Shai-Hulud, 2025 |
 
-## Use it from any AI coding assistant (MCP)
+## 🤖 The AI verification agent
 
-Rempart is also a Model Context Protocol server, so a coding agent can scan, inspect and triage while it writes code:
+```mermaid
+sequenceDiagram
+    participant R as rempart agent
+    participant M as LLM (Anthropic API)
+    participant W as Read-only workspace
+    R->>M: 15 highest-risk findings
+    loop until every finding has a verdict
+        M->>W: get_finding · search_code · read_file
+        W-->>M: code (marked as untrusted data)
+    end
+    M->>R: record_verdict + file:line evidence
+    M->>R: propose_fix (exact search-and-replace)
+    R->>R: report.md + fixes.patch, verdicts feed learning at half weight
+```
+
+```bash
+export ANTHROPIC_API_KEY=...
+rempart agent . --max-findings 15     # → rempart-agent-report.md + rempart-fixes.patch
+rempart agent . --apply               # also write the fixes (review with git diff)
+```
+
+It uses the newest Opus-tier model available to your key, or the one set with `--model` / `REMPART_MODEL`. **Safe by construction**:
+
+- 🔒 It reads only the files the scan discovered. There is no tool to execute code, reach the network or write.
+- 🧱 Repository content is declared untrusted, a defence against prompt injection planted in comments or READMEs.
+- ⏱️ The loop is bounded, and server-side refusal fallback keeps a declined request from aborting the run.
+- ⚖️ Its verdicts never delete a finding. They count half in calibration and never override yours.
+
+It is tested against the real Anthropic Python SDK through a mocked HTTP transport, asserting the exact request bodies.
+
+## 🔌 Plug it into your AI coding assistant (MCP)
 
 ```json
 { "mcpServers": { "rempart": { "command": "rempart", "args": ["mcp"] } } }
 ```
 
-The tools are `rempart_scan`, `rempart_finding`, `rempart_triage`, `rempart_web_audit`, `rempart_image_scan` and `rempart_rules`.
+Tools: `rempart_scan` · `rempart_finding` · `rempart_triage` · `rempart_web_audit` · `rempart_image_scan` · `rempart_rules`. Your assistant can scan, read details and record verdicts while it writes code.
 
-## Ranking and score
+## 🗺️ Coverage
+
+<details open>
+<summary><b>16 domains, mapped to current frameworks</b></summary>
+
+| Domain | Highlights | Frameworks |
+|---|---|---|
+| 🧬 **Code** | SQL/NoSQL/command/code/template injection, XSS sinks, SSRF, path traversal, open redirect, deserialization, JWT `none`, weak crypto, mass assignment, CORS, uploads, ReDoS, Trojan Source, IDOR queue. Python AST + JS/TS/Svelte/Vue, Go, Java/Kotlin, PHP, Ruby, C#, C/C++ | OWASP A01–A10:2025, CWE Top 25 |
+| 🔑 **Secrets** | 25 token formats, private keys, entropy-filtered literals, committed `.env`; live checks for 13 providers | CWE-798 |
+| 📦 **Dependencies** | 12 lockfile formats → OSV + KEV + EPSS, malicious releases, typosquats, dependency confusion, install scripts | A03:2025 |
+| 🐳 **Images** | Registry pull without Docker, whiteout-aware layers, dpkg/apk via OSV, Python & npm inside images, EOL OS and runtimes, secrets in files/ENV/history | A03/A06:2025 |
+| ☁️ **Live AWS** | 28 read-only checks: IAM, S3, security groups (IPv4/IPv6), IMDSv1, EBS, snapshots, RDS, CloudTrail, GuardDuty, Config, KMS, Lambda, EKS, Access Analyzer | CIS AWS Foundations |
+| ☸️ **Kubernetes** | Manifests and live clusters: privileged pods, host namespaces, hostPath, capabilities, RBAC escalation, cluster-admin, exposed data services | OWASP K8s Top 10 (2025) |
+| 🏗️ **IaC** | Terraform AWS/GCP/Azure incl. `jsonencode()` policies, state committed | CIS, A02/A04:2025 |
+| ⚙️ **CI/CD** | Pwn requests, script injection, unpinned actions, cache poisoning, OIDC on untrusted triggers, long-lived publish tokens | OWASP CICD-SEC-1…10 |
+| 🗄️ **Data** | Connection-string credentials, DB without TLS, exposed MongoDB/Redis/Postgres/MySQL/Elasticsearch, Supabase RLS, Firebase rules, PII & card numbers, sensitive logs | Québec Law 25, PIPEDA, GDPR, PCI DSS |
+| 🧠 **AI & agents** | Unpinned MCP servers, secrets in MCP configs, invisible Unicode in assistant instruction files, LLM output to sinks, shell-executing tools | OWASP LLM 2025, Agentic 2026 |
+| 🧹 **Quality & perf** | Fail-open auth, swallowed exceptions, N+1 queries, missing timeouts, unbounded queries, blocking I/O | A10:2025 |
+| 🌐 **Web (passive)** | HTTPS, HSTS, CSP, framing, cookies, CORS, banners, legacy TLS, certificate expiry, `security.txt`, cold/warm TTFB | A02/A04/A07:2025 |
+
+The full research is in **[docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md)**: every threat class, the 2025-2026 incidents behind it, and an honest list of what static analysis cannot see. All rules: [docs/RULES.md](docs/RULES.md).
+
+</details>
+
+<details>
+<summary><b>Ranking, score and learning formulas</b></summary>
 
 ```
 risk = severity_weight × (0.5 + confidence / 2)
 if EPSS is known:      risk = max(risk, 0.6 × risk + 40 × EPSS)
-if CVE is in CISA KEV: risk = max(risk, 95)
-posture score = 100 × exp(−penalty / 120)   (repeats of one rule weigh 1, ½, ⅓…)
+if CVE is in CISA KEV: risk = max(risk, 95)                 # fact beats prediction
+posture score = 100 × exp(−penalty / 120)                   # repeats of one rule weigh 1, ½, ⅓…
+precision(rule) = (TP + a) / (TP + FP + a + b)              # Beta prior from the rule's declared confidence
 ```
 
-Distribution CVEs with no fix in your release that are over three years old are kept but ranked LOW, unless KEV-listed. That pattern marks issues the distribution judged disputed or minor.
+Distribution CVEs with no fix in your release that are over three years old are kept but ranked LOW unless KEV-listed. Rules with ≥ 5 false positives and < 25 % precision drop one severity level.
 
-## Learning loop
+</details>
 
-```bash
-rempart triage 7d9771c7fb --fp --note "bounded regex"   # human verdicts close findings in this project
-rempart learn                                           # learned precision per rule, across projects
-rempart history                                         # score trend, new vs fixed, mean time to remediate
-```
-
-`precision = (TP + a) / (TP + FP + a + b)`, with the rule's declared confidence as the prior. Rules with ≥ 5 false positives and < 25 % precision drop one severity level. State lives in a local SQLite file (`REMPART_HOME`, default `~/.local/share/rempart`).
-
-## In CI
-
-SARIF 2.1.0 output lands in GitHub's Security tab:
+<details>
+<summary><b>CI, configuration and output formats</b></summary>
 
 ```yaml
 - uses: Houssam2510/rempart@<commit-sha>
@@ -163,29 +216,39 @@ SARIF 2.1.0 output lands in GitHub's Security tab:
   with: { sarif_file: rempart.sarif }
 ```
 
-Other formats are `json`, `md` and `html` (a self-contained, filterable report). Configuration goes in `.rempart.toml` (exclude, disable, severity overrides, `fail_on`) or inline with `rempart:ignore[RULE-ID]`.
+The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contained, filterable report). Configure with `.rempart.toml` (`exclude`, `disable`, `[severity]` overrides, `fail_on`), or inline with `# rempart:ignore[RULE-ID]`.
 
-## Measured precision
+</details>
 
-Every false positive found by scanning real repositories became a regression test.
+## 📏 Measured, not claimed
 
 | Target | Result |
 |---|---|
-| A production SvelteKit SaaS (350 files, 426 npm packages) | All findings reviewed. Dogfooding removed false positives on a language cookie, escaped JSON-LD, bounded regexes and `RegExp.exec()`. It surfaced real advisories in transitive framework dependencies. |
-| [cspm-lite](https://github.com/Houssam2510/cspm-lite) vulnerable AWS lab | 9 of 9 planted misconfigurations, plus 2 attack paths (admin IAM × IMDSv1, exposed data store). |
-| `python:3.9-slim` (live pull, 6 s) | Debian 13, 64 packages, EOL Python runtime detected, OS CVEs ranked with fixed ones first. |
-| AWS checks | All 28 validated against the official AWS service models with botocore's Stubber. Wrong operation or parameter names fail the build. |
-| Rempart itself | Grade A. CI fails on any high finding. Self-scan found an f-string SQL query in the history module, rewritten with bound parameters. |
+| Production SvelteKit SaaS (350 files, 426 packages) | All findings reviewed. Dogfooding removed false positives (language cookie, escaped JSON-LD, bounded regexes, `RegExp.exec()`) and surfaced real advisories in transitive framework dependencies. |
+| [cspm-lite](https://github.com/Houssam2510/cspm-lite) vulnerable AWS lab | **9 / 9** planted misconfigurations + 2 attack paths |
+| `python:3.9-slim` (live pull, 6 s) | Debian 13, 64 packages, EOL runtime flagged, 176 OS CVEs ranked fixable-first |
+| AWS checks | **28 / 28** validated against the official AWS service models (botocore Stubber) |
+| Rempart on itself | Grade **A**. CI fails on any high finding, and 0 tests are skipped in CI. |
 
-## Limits, stated plainly
+## ⚠️ Limits, stated plainly
 
-- **Data flow is intra-procedural.** A value laundered across functions or files is missed. CodeQL and Semgrep Pro go deeper. Rempart trades depth for breadth and zero setup, and the agent covers part of the gap.
-- **Attack paths come from co-occurrence, not a resource graph.** Links are findings that coexist in the same repository or account, so two links may concern different resources. Each chain names its links so you can check them. A resource-level graph is on the roadmap.
-- **Logic flaws** (IDOR, business-flow abuse) are a review queue for humans or the agent, not verdicts.
-- **Images**: RPM databases, Go binaries and JARs are not parsed yet. zstd layers need Python 3.14.
-- **Live cloud** is AWS only. GCP and Azure are covered in Terraform, not live.
-- **The web mode is passive.** It sends no payloads and is not a penetration test.
+- **Data flow stays inside one function.** Values laundered across functions are missed. The agent covers part of that gap.
+- **Attack paths come from co-occurrence, not a resource graph.** Links may concern different resources, so each chain names them for you to check.
+- **Logic flaws** (IDOR, business-flow abuse) are a review queue, not verdicts.
+- **Images**: RPM, Go binaries and JARs are not parsed yet.
+- **Live cloud**: AWS only so far.
+- **The web mode is passive.** It is not a penetration test.
 
-## Related
+## 🛣️ Roadmap
 
-[cspm-lite](https://github.com/Houssam2510/cspm-lite) and [triage](https://github.com/Houssam2510/triage) were the first steps. Rempart now includes their live AWS audit and their KEV + EPSS prioritisation and goes further, so it stands on its own. Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md) · Security policy: [SECURITY.md](SECURITY.md) · MIT license.
+`baseline mode for PRs` · `git-history secrets` · `resource-level attack graph` · `inter-procedural data flow` · `live GCP & Azure` · `RPM / Go / JAR images` · `release-cooldown policy` · `agent evaluation corpus` · `PyPI release` → [docs/ROADMAP.md](docs/ROADMAP.md)
+
+## 📚 Learn it
+
+- **[learning/rempart-guide.pdf](learning/rempart-guide.pdf)**: a 16-page illustrated guide in French, one concept per page with real examples.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md) · [SECURITY.md](SECURITY.md) (what is sent where).
+
+---
+
+<p align="center"><sub>Built by <a href="https://github.com/Houssam2510">Houssam Nadir</a> · Polytechnique Montréal · MIT license<br>
+Related: <a href="https://github.com/Houssam2510/cspm-lite">cspm-lite</a> and <a href="https://github.com/Houssam2510/triage">triage</a>, the earlier prototypes whose live-AWS audit and KEV/EPSS prioritisation now live inside Rempart.</sub></p>
