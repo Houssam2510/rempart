@@ -9,6 +9,7 @@ from rempart import __version__
 from rempart.engine import ScanResult, score
 from rempart.models import Severity
 from rempart.registry import OWASP_2025, REGISTRY
+from rempart.scanners.deps import upgrade_plan
 
 
 def render_json(result: ScanResult) -> str:
@@ -24,6 +25,7 @@ def render_json(result: ScanResult) -> str:
         "suppressed": result.suppressed,
         "errors": result.errors,
         "findings": [f.to_dict() for f in result.findings],
+        "upgrade_plan": upgrade_plan(result.findings),
     }, indent=2, ensure_ascii=False)
 
 
@@ -86,6 +88,14 @@ def render_markdown(result: ScanResult) -> str:
             assert f.severity is not None
             msg = f.message.replace("|", "\\|")
             lines.append(f"| {f.severity.name} | **{f.rule.title}** — {msg} | `{f.path}:{f.line}` |")
+        lines.append("")
+    plan = upgrade_plan(result.findings)
+    if plan:
+        lines += ["### Upgrade plan", "", "| Package | Current | Upgrade to | Advisories fixed | Notes |", "|---|---|---|---:|---|"]
+        for row in plan[:20]:
+            notes = ", ".join(n for n, on in (("KEV", row["kev"]), ("used by your code", row["reachable"]), ("major version", row["major_bump"]),
+                                              ("dev only", row["scope"] == "dev")) if on)
+            lines.append(f"| `{row['package']}` | {row['current']} | **{row['target'] or 'no fix yet'}** | {row['fixes']}/{row['advisories']} | {notes} |")
         lines.append("")
     matrix = _owasp_matrix(result)
     if matrix:

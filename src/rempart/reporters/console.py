@@ -6,6 +6,7 @@ from typing import Any
 
 from rempart.engine import ScanResult, score
 from rempart.models import Severity
+from rempart.scanners.deps import upgrade_plan
 
 COLORS = {Severity.CRITICAL: "\033[1;97;41m", Severity.HIGH: "\033[1;31m", Severity.MEDIUM: "\033[33m", Severity.LOW: "\033[36m", Severity.INFO: "\033[2m"}
 RESET, BOLD, DIM = "\033[0m", "\033[1m", "\033[2m"
@@ -75,6 +76,25 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
                 if maps:
                     out.append(col(f"         maps: {', '.join(maps)}", DIM))
             out.append(col(f"         id {f.fingerprint[:10]} · {f.rule.id} · risk {f.risk:.0f}" + (f" · {f.learned_note}" if f.learned_note else ""), DIM))
+        out.append("")
+    plan = upgrade_plan(result.findings)
+    if plan:
+        out.append(col(f"■ upgrade plan ({len(plan)} package(s), most urgent first)", BOLD))
+        for row in plan[:12]:
+            target = row["target"] or "no fix published"
+            notes = [f"{row['fixes']}/{row['advisories']} advisories fixed"]
+            if row["kev"]:
+                notes.append("KEV")
+            if row["reachable"]:
+                notes.append("used by your code")
+            if row["major_bump"]:
+                notes.append("major version")
+            if row["scope"] == "dev":
+                notes.append("dev only")
+            out.append(f"  {col(row['severity'][:4], COLORS[Severity[row['severity']]])} {row['package']} {row['current']} → {col(target, BOLD)}  "
+                       + col(" · ".join(notes), DIM))
+        if len(plan) > 12:
+            out.append(col(f"  … {len(plan) - 12} more in --format json (upgrade_plan)", DIM))
         out.append("")
     hidden = len(shown) - printed - collapsed
     if hidden > 0:

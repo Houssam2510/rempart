@@ -20,6 +20,7 @@ class Package:
     version: str
     path: str
     line: int
+    dev: bool = False  # only needed to build or test; never shipped to production
 
 
 def _line_finder(text: str) -> Callable[[str, str], int]:
@@ -56,13 +57,13 @@ def parse_package_lock(path: str, text: str) -> Iterator[Package]:
             name = meta.get("name") or key.rsplit("node_modules/", 1)[-1]
             version = meta.get("version")
             if version:
-                yield Package("npm", name, version, path, find(f'"{key}"', ""))
+                yield Package("npm", name, version, path, find(f'"{key}"', ""), dev=bool(meta.get("dev") or meta.get("devOptional")))
         return
 
     def walk(deps: dict[str, dict]) -> Iterator[Package]:
         for name, meta in deps.items():
             if isinstance(meta, dict) and meta.get("version"):
-                yield Package("npm", name, meta["version"], path, find(f'"{name}"', meta["version"]))
+                yield Package("npm", name, meta["version"], path, find(f'"{name}"', meta["version"]), dev=bool(meta.get("dev")))
                 yield from walk(meta.get("dependencies") or {})
 
     yield from walk(data.get("dependencies") or {})
@@ -71,7 +72,8 @@ def parse_package_lock(path: str, text: str) -> Iterator[Package]:
 def parse_pnpm_lock(path: str, text: str) -> Iterator[Package]:
     find = _line_finder(text)
     in_packages = False
-    for raw in text.splitlines():
+    all_lines = text.splitlines()
+    for idx, raw in enumerate(all_lines):
         if re.match(r"^(packages|snapshots):\s*$", raw):
             in_packages = raw.startswith("packages")
             continue
@@ -91,7 +93,14 @@ def parse_pnpm_lock(path: str, text: str) -> Iterator[Package]:
         else:
             continue
         if name and version and re.match(r"^\d", version):
-            yield Package("npm", name, version, path, find(key, ""))
+            dev = False  # lockfile v5/v6 mark dev-only packages with `dev: true`
+            for nxt in all_lines[idx + 1: idx + 40]:
+                if not nxt.startswith("    "):
+                    break
+                if nxt.strip() == "dev: true":
+                    dev = True
+                    break
+            yield Package("npm", name, version, path, find(key, ""), dev=dev)
 
 
 def parse_yarn_lock(path: str, text: str) -> Iterator[Package]:
@@ -113,11 +122,12 @@ def parse_yarn_lock(path: str, text: str) -> Iterator[Package]:
 
 
 def parse_requirements(path: str, text: str) -> Iterator[Package]:
+    dev = bool(re.search(r"(?i)[-_.](?:dev|test|tests|testing|lint|docs|ci)\b", path.rsplit("/", 1)[-1]))
     for i, raw in enumerate(text.splitlines(), 1):
         line = raw.split("#", 1)[0].strip()
         m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._\-]*)(?:\[[^\]]*\])?\s*===?\s*([A-Za-z0-9._+\-!]+)", line)
         if m:
-            yield Package("PyPI", m.group(1), m.group(2), path, i)
+            yield Package("PyPI", m.group(1), m.group(2), path, i, dev=dev)
 
 
 def _toml_packages(path: str, text: str, ecosystem: str) -> Iterator[Package]:
@@ -129,7 +139,7 @@ def _toml_packages(path: str, text: str, ecosystem: str) -> Iterator[Package]:
         if isinstance(source, dict) and ("editable" in source or "virtual" in source or "path" in source):
             continue
         if name and version:
-            yield Package(ecosystem, name, str(version), path, find(f'name = "{name}"', ""))
+            yield Package(ecosystem, name, str(version), path, find(f'name = "{name}"', ""), dev=pkg.get("category") == "dev")
 
 
 def parse_poetry_lock(path: str, text: str) -> Iterator[Package]:
@@ -147,7 +157,7 @@ def parse_pipfile_lock(path: str, text: str) -> Iterator[Package]:
         for name, meta in (data.get(section) or {}).items():
             v = (meta or {}).get("version", "")
             if v.startswith("=="):
-                yield Package("PyPI", name, v[2:], path, find(f'"{name}"', ""))
+                yield Package("PyPI", name, v[2:], path, find(f'"{name}"', ""), dev=section == "develop")
 
 
 def parse_go_mod(path: str, text: str) -> Iterator[Package]:
@@ -185,7 +195,7 @@ def parse_composer_lock(path: str, text: str) -> Iterator[Package]:
         for pkg in data.get(section) or []:
             name, version = pkg.get("name"), str(pkg.get("version", "")).lstrip("v")
             if name and version and not version.startswith("dev-"):
-                yield Package("Packagist", name, version, path, find(f'"{name}"', ""))
+                yield Package("Packagist", name, version, path, find(f'"{name}"', ""), dev=section == "packages-dev")
 
 
 def parse_gradle_lockfile(path: str, text: str) -> Iterator[Package]:

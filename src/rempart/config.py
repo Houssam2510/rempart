@@ -24,6 +24,7 @@ class Config:
     severity_overrides: dict[str, Severity] = field(default_factory=dict)
     fail_on: Severity | None = None
     include_tests: bool = False
+    prod_only: bool = False  # ignore packages only used to build or test
 
     @classmethod
     def load(cls, root: Path) -> "Config":
@@ -37,6 +38,7 @@ class Config:
             severity_overrides={str(k): Severity.parse(str(v)) for k, v in data.get("severity", {}).items()},
         )
         cfg.include_tests = bool(data.get("include_tests", False))
+        cfg.prod_only = bool(data.get("prod_only", False))
         if "fail_on" in data:
             cfg.fail_on = Severity.parse(str(data["fail_on"]))
         return cfg

@@ -97,3 +97,24 @@ def classify(ecosystem: str, name: str, imported: dict[str, set[str]], direct: d
     if ecosystem == "Go":
         return name in direct["Go"], any(i == name or i.startswith(name + "/") for i in imported["Go"])
     return None, None
+
+
+_EXT = {"npm": (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".svelte", ".vue", ".astro"), "PyPI": (".py",), "Go": (".go",)}
+
+
+def find_symbol_use(files: Iterable[str], read: Callable[[str], str | None], ecosystem: str, symbols: list[str]) -> tuple[str, int, str] | None:
+    """First place the project calls (or references as a member) one of the vulnerable symbols."""
+    exts = _EXT.get(ecosystem)
+    if not exts or not symbols:
+        return None
+    pattern = re.compile(r"(?:\.|\b)(" + "|".join(re.escape(s) for s in symbols) + r")\s*\(")
+    for rel in files:
+        if not rel.endswith(exts) or "node_modules/" in rel or "/vendor/" in rel:
+            continue
+        for i, line in enumerate((read(rel) or "").splitlines(), 1):
+            for m in pattern.finditer(line):
+                before = line[:m.start(1)]
+                if re.search(r"\b(?:def|func|function)\s+(?:\([^)]*\)\s*)?$", before):
+                    continue  # the project defines its own function of that name
+                return rel, i, m.group(1)
+    return None

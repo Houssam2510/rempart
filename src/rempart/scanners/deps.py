@@ -14,6 +14,7 @@ import math
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from typing import Any, Iterator
 
 from rempart.engine import ScanContext
@@ -147,6 +148,83 @@ def fixed_versions(v: dict[str, Any], pkg: Package) -> list[str]:
     return out
 
 
+def vulnerable_symbols(v: dict[str, Any], pkg: Package) -> list[str]:
+    """Functions an advisory names as vulnerable (Go vulndb `imports[].symbols`,
+    `affected_functions` in some PyPI and npm records). Empty when unknown."""
+    out: list[str] = []
+    for aff in v.get("affected") or []:
+        p = aff.get("package") or {}
+        if str(p.get("name", "")).lower() != pkg.name.lower():
+            continue
+        spec = aff.get("ecosystem_specific") or {}
+        names: list[str] = []
+        for imp in spec.get("imports") or []:
+            names += [str(x) for x in imp.get("symbols") or []]
+        names += [str(x) for x in spec.get("affected_functions") or []]
+        names += [str(x) for x in (aff.get("database_specific") or {}).get("affected_functions") or []]
+        for n in names:
+            short = re.split(r"[.:#]", n)[-1]
+            if short and short not in out and re.fullmatch(r"[A-Za-z_$][\w$]*", short):
+                out.append(short)
+    return out
+
+
+def _vkey(version: str) -> tuple:
+    parts = re.split(r"[.\-+_]", version.lstrip("vV="))
+    return tuple((0, int(x), "") if x.isdigit() else (-1, 0, x) for x in parts)
+
+
+def upgrade_plan(findings: list[Finding]) -> list[dict[str, Any]]:
+    """One line per vulnerable package: the smallest version that fixes every advisory."""
+    groups: dict[tuple[str, str, str], list[Finding]] = {}
+    for f in findings:
+        if f.rule is R_VULN and f.extra.get("package"):
+            groups.setdefault((str(f.extra["ecosystem"]), str(f.extra["package"]), str(f.extra["version"])), []).append(f)
+    plan: list[dict[str, Any]] = []
+    for (eco, name, current), items in groups.items():
+        cur = _vkey(current)
+        target: str | None = None
+        unfixed: list[str] = []
+        for f in items:
+            later = sorted((x for x in f.extra.get("fixed") or [] if _vkey(x) > cur), key=_vkey)
+            if not later:
+                unfixed.append(str(f.extra.get("advisory")))
+                continue
+            # prefer a fix in the same major line, which is the least disruptive upgrade
+            same_major = [x for x in later if _vkey(x)[:1] == cur[:1]]
+            pick = (same_major or later)[0]
+            if target is None or _vkey(pick) > _vkey(target):
+                target = pick
+        worst = max(f.severity for f in items if f.severity is not None)
+        plan.append({
+            "ecosystem": eco, "package": name, "current": current, "target": target,
+            "major_bump": bool(target and _vkey(target)[:1] != cur[:1]),
+            "advisories": len(items), "fixes": len(items) - len(unfixed), "unfixed": unfixed,
+            "severity": worst.name, "kev": any(f.extra.get("kev") for f in items),
+            "reachable": any(f.verification in ("reachable", "function-reachable") for f in items),
+            "scope": "prod" if any(f.extra.get("scope") != "dev" for f in items) else "dev",
+            "paths": sorted({f.path for f in items}),
+        })
+    plan.sort(key=lambda r: (not r["kev"], -Severity[r["severity"]].value, not r["reachable"], r["scope"] == "dev", -r["advisories"]))
+    return plan
+
+
+def _npm_manifest_scopes(ctx: ScanContext) -> tuple[set[str], set[str]]:
+    prod: set[str] = set()
+    dev: set[str] = set()
+    for rel in ctx.by_name("package.json"):
+        if "node_modules/" in rel:
+            continue
+        try:
+            data = json.loads(ctx.text(rel) or "{}")
+        except ValueError:
+            continue
+        for key in ("dependencies", "optionalDependencies", "peerDependencies"):
+            prod.update((data.get(key) or {}).keys())
+        dev.update((data.get("devDependencies") or {}).keys())
+    return prod, dev
+
+
 # ---------------------------------------------------------------- scanner
 
 class DependencyScanner:
@@ -169,6 +247,8 @@ class DependencyScanner:
     def with_reachability(ctx: ScanContext, findings: Iterator[Finding]) -> Iterator[Finding]:
         from rempart.reachability import classify, direct_dependencies, imported_names
 
+        from rempart.reachability import find_symbol_use
+
         imported = imported_names(ctx.files, ctx.text)
         direct = direct_dependencies(ctx.files, ctx.text)
         for f in findings:
@@ -177,7 +257,18 @@ class DependencyScanner:
                 is_direct, is_imported = classify(str(eco), str(name), imported, direct)
                 if is_imported is not None:
                     f.extra["direct"], f.extra["imported"] = is_direct, is_imported
-                    if is_imported:
+                    symbols = f.extra.get("symbols") or []
+                    if is_imported and symbols:
+                        use = find_symbol_use(ctx.files, ctx.text, str(eco), symbols)
+                        if use:
+                            f.verification = "function-reachable"
+                            f.extra["call_site"] = f"{use[0]}:{use[1]}"
+                            f.message += f" — your code calls the vulnerable {use[2]}() at {use[0]}:{use[1]}"
+                        else:
+                            f.verification = "imported"
+                            f.confidence = round((f.confidence or 0.9) * 0.75, 2)
+                            f.message += f" — imported, but none of the vulnerable functions ({', '.join(symbols[:4])}) is called"
+                    elif is_imported:
                         f.verification = "reachable"
                         f.message += " — imported by your code"
                     elif is_direct:
@@ -200,10 +291,21 @@ class DependencyScanner:
                 continue
             try:
                 for p in parser(rel, text):
-                    seen.setdefault((p.ecosystem, p.name.lower() if p.ecosystem == "PyPI" else p.name, p.version), p)
+                    k = (p.ecosystem, p.name.lower() if p.ecosystem == "PyPI" else p.name, p.version)
+                    if k not in seen or (seen[k].dev and not p.dev):  # shipped somewhere wins over dev-only
+                        seen[k] = p
             except (ValueError, KeyError, TypeError, AttributeError):
                 continue
-        return list(seen.values())
+        # yarn and pnpm v9 do not mark dev packages: use the manifests for direct ones
+        prod, dev = _npm_manifest_scopes(ctx)
+        out = []
+        for p in seen.values():
+            if p.ecosystem == "npm" and not p.dev and p.name in dev and p.name not in prod:
+                p = replace(p, dev=True)
+            out.append(p)
+        if ctx.config.prod_only:
+            out = [p for p in out if not p.dev]
+        return out
 
     def vulnerabilities(self, packages: list[Package]) -> Iterator[Finding]:
         hits: list[tuple[Package, str]] = []
@@ -245,6 +347,7 @@ class DependencyScanner:
             if in_kev:
                 sev = Severity.CRITICAL
             fixes = fixed_versions(d, pkg)
+            symbols = vulnerable_symbols(d, pkg)
             summary = (d.get("summary") or d.get("details") or "").strip().splitlines()[0][:140] if (d.get("summary") or d.get("details")) else ""
             label = vid + (f" / {cve_ids[0]}" if cve_ids and cve_ids[0] != vid else "")
             parts = [f"{pkg.name}@{pkg.version}: {label}"]
@@ -256,10 +359,15 @@ class DependencyScanner:
                 parts.append("exploited in the wild (CISA KEV)")
             elif e >= 0.1:
                 parts.append(f"EPSS {e:.0%}")
+            if pkg.dev:
+                parts.append("dev dependency, not shipped to production")
+                if not in_kev:
+                    sev = max(Severity.LOW, Severity(sev.value - 1)) if sev > Severity.LOW else sev
             f = Finding(R_VULN, pkg.path, pkg.line, " — ".join(parts), snippet=f"{pkg.name}@{pkg.version}",
                         extra={"anchor": f"{pkg.ecosystem}:{pkg.name}:{pkg.version}:{key[2]}", "package": pkg.name, "version": pkg.version,
                                "ecosystem": pkg.ecosystem, "advisory": vid, "aliases": aliases, "fixed": fixes, "cvss": cvss,
-                               "epss": round(e, 4), "kev": in_kev, "published": str(d.get("published", ""))[:10]})
+                               "epss": round(e, 4), "kev": in_kev, "published": str(d.get("published", ""))[:10],
+                               "scope": "dev" if pkg.dev else "prod", "symbols": symbols})
             f.severity = sev
             yield f
 

@@ -37,6 +37,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"rempart: {root} is not a directory", file=sys.stderr)
         return 2
     config = Config.load(root)
+    if getattr(args, "prod_only", False):
+        config.prod_only = True
     names = list(ALL_SCANNERS)
     if args.only:
         names = [n.strip() for n in args.only.split(",")]
@@ -322,6 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--aws", nargs="?", const="default", metavar="PROFILE",
                    help="also audit the live AWS account (read-only) and correlate it with the code")
     s.add_argument("--image", action="append", metavar="REF", help="also scan this container image (repeatable)")
+    s.add_argument("--prod-only", action="store_true", help="ignore dependencies only used to build or test (devDependencies, dev groups)")
     s.add_argument("--verify-secrets", action="store_true",
                    help="check whether detected credentials are live by calling each provider's read-only identity endpoint (your own repositories only)")
     s.add_argument("--fail-on", choices=[x.name.lower() for x in Severity], help="exit 1 if a finding at or above this severity exists")
