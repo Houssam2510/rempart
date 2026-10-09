@@ -23,6 +23,7 @@ class Config:
     disable: set[str] = field(default_factory=set)
     severity_overrides: dict[str, Severity] = field(default_factory=dict)
     fail_on: Severity | None = None
+    include_tests: bool = False
 
     @classmethod
     def load(cls, root: Path) -> "Config":
@@ -35,6 +36,7 @@ class Config:
             disable={str(r) for r in data.get("disable", [])},
             severity_overrides={str(k): Severity.parse(str(v)) for k, v in data.get("severity", {}).items()},
         )
+        cfg.include_tests = bool(data.get("include_tests", False))
         if "fail_on" in data:
             cfg.fail_on = Severity.parse(str(data["fail_on"]))
         return cfg

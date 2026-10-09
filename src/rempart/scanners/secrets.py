@@ -178,7 +178,8 @@ class SecretsScanner:
                 continue
             for m in _ASSIGN.finditer(line):
                 name, value = m.group("name"), m.group("value")
-                if _SKIP_NAME.search(name) or _PLACEHOLDER.match(value) or value.startswith(("$", "{", "%", "/", "http")):
+                if _SKIP_NAME.search(name) or _PLACEHOLDER.match(value) or value.startswith(("$", "{", "%", "/", "http")) \
+                        or re.fullmatch(r"[A-Z][A-Z0-9_\-]{2,}", value):
                     continue
                 if entropy(value) < 3.2 or not (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):
                     continue

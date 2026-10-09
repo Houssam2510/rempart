@@ -19,6 +19,9 @@ SKIP_DIRS = {
     ".git", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
     ".svelte-kit", ".next", ".nuxt", ".output", "target", "vendor", ".terraform",
     "coverage", ".rempart", ".mypy_cache", ".pytest_cache", ".tox", ".vercel",
+    # build caches and generated bundles: third-party code, not yours
+    ".vite", ".turbo", ".cache", ".parcel-cache", ".angular", ".docusaurus", ".expo", ".astro",
+    "storybook-static", ".wrangler", ".netlify", ".serverless", "bower_components", "jspm_packages",
 }
 SKIP_SUFFIXES = (
     ".min.js", ".min.css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
@@ -26,6 +29,20 @@ SKIP_SUFFIXES = (
     ".lockb", ".wasm", ".so", ".dll", ".exe", ".class", ".jar", ".pyc",
 )
 MAX_BYTES = 2_000_000
+
+# Test, fixture and mock files: weaknesses there are not reachable in production, so
+# code-level domains skip them by default (secrets still apply: a real key in a test leaks too).
+TEST_PATH = re.compile(
+    r"(?:^|/)(?:tests?|__tests__|spec|specs|e2e|fixtures?|__fixtures__|__mocks__|mocks?|testdata|test-utils)/"
+    r"|\.(?:test|spec|e2e)\.[cm]?[jt]sx?$|(?:^|/)test_[^/]*\.py$|_test\.(?:py|go)$|(?:^|/)conftest\.py$|\.stories\.[jt]sx?$"
+)
+TEST_SKIPPED_DOMAINS = {"code", "quality", "performance", "ai"}
+TEST_SKIPPED_RULE_PREFIXES = ("DATA-SENSITIVE-LOGGED", "PERF-", "CODE-", "SEC-GENERIC", "SEC-JWT")
+
+
+def is_test_path(rel: str) -> bool:
+    return bool(TEST_PATH.search(rel))
+
 
 _IGNORE = re.compile(r"rempart:ignore(?:\[([A-Z0-9_,\- ]+)\])?")
 
@@ -210,6 +227,10 @@ def run_scan(
             continue
         for f in produced:
             if f.rule.id in config.disable:
+                continue
+            if not config.include_tests and f.line > 0 and is_test_path(f.path) and (
+                    f.rule.domain in TEST_SKIPPED_DOMAINS or f.rule.id.startswith(TEST_SKIPPED_RULE_PREFIXES)):
+                suppressed += 1
                 continue
             if f.rule.id in config.severity_overrides:
                 f.severity = config.severity_overrides[f.rule.id]

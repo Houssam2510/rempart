@@ -33,7 +33,7 @@ R_MUTABLE_DEFAULT = rule("QUAL-MUTABLE-DEFAULT", "Mutable default argument", L, 
                          fix="Default to None and create the list/dict inside the function; the default is shared across calls (and across users).", confidence=0.9)
 R_FOREACH_ASYNC = rule("QUAL-FOREACH-ASYNC", "async callback inside forEach", M, "quality", cwe=("CWE-755", "CWE-362"), owasp=A10,
                        fix="forEach ignores returned promises: work runs unawaited and rejections go unhandled. Use for...of with await, or Promise.all(items.map(...)).")
-R_N_PLUS_ONE = rule("PERF-N-PLUS-ONE", "Database or network call inside a loop", M, "performance", cwe="CWE-1050",
+R_N_PLUS_ONE = rule("PERF-N-PLUS-ONE", "Database or network call inside a loop", L, "performance", cwe="CWE-1050",
                     fix="Batch the lookups (WHERE id IN (...), $in, include/join, DataLoader) or run independent calls concurrently with a bounded pool.", confidence=0.6)
 R_NO_TIMEOUT = rule("PERF-NO-TIMEOUT", "Network call without a timeout", M, "performance", cwe=("CWE-400", "CWE-1088"),
                     fix="Always pass a timeout (requests: timeout=(3, 30); fetch: AbortSignal.timeout(ms)). Without it one slow upstream exhausts every worker.", confidence=0.8)
@@ -149,7 +149,10 @@ class QualityScanner:
         server_path = not re.search(r"\.(?:test|spec)\.[jt]sx?$|(?:^|/)(?:tests?|__tests__)/", rel) and bool(re.search(r"(?:^|/)(?:api|server|routes?|controllers?|handlers?|middleware)/|\+server\.[jt]s$|\+page\.server\.[jt]s$|route\.[jt]s$", rel))
         for m in re.finditer(r"catch\s*(?:\(\s*\w*\s*\))?\s*\{\s*\}", text):
             ln = text.count("\n", 0, m.start()) + 1
-            yield Finding(R_SWALLOW, rel, ln, "Empty catch block.", snippet=lines[ln - 1].strip()[:200] if ln <= len(lines) else "catch {}")
+            # Empty catches around best-effort cleanup (close, abort, unlink, release) are deliberate.
+            context = lines[ln - 1] if ln <= len(lines) else ""
+            sev = Severity.LOW if re.search(r"close|abort|cancel|unlink|rm\(|release|destroy|disconnect|removeItem|JSON\.parse|decodeURI", context + (lines[ln - 2] if ln >= 2 else "")) else Severity.MEDIUM
+            yield Finding(R_SWALLOW, rel, ln, "Empty catch block.", snippet=context.strip()[:200] or "catch {}", severity=sev)
         for m in re.finditer(r"catch\s*(?:\(\s*\w*\s*\))?\s*\{\s*(?:console\.\w+\([^)]*\);?\s*)?(?:return\s+(?:true|next\(\))|next\(\)\s*;?\s*\})", text):
             before = text[max(0, m.start() - 600): m.start()]
             if AUTHY.search(before):

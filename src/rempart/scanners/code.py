@@ -11,10 +11,10 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass
-from typing import Iterator
+from typing import Any, Iterator
 
 from rempart.engine import ScanContext, is_comment, line_of
-from rempart.models import Finding, Rule
+from rempart.models import Finding, Rule, Severity
 from rempart.registry import A01, A02, A04, A05, A06, A07, A08, A10, C, H, L, M, rule
 
 JS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".svelte", ".vue")
@@ -46,7 +46,7 @@ R_DESER = rule("CODE-UNSAFE-DESERIALIZATION", "Deserialization of untrusted data
                fix="Use a data-only format (JSON) or a safe loader (yaml.safe_load). Native object deserializers execute code chosen by whoever controls the bytes.")
 R_TLS = rule("CODE-TLS-VERIFY-DISABLED", "TLS certificate verification disabled", H, "code", cwe="CWE-295", owasp=A04,
              fix="Keep verification on. For private CAs, pass the CA bundle explicitly instead of disabling checks.")
-R_WEAK_HASH = rule("CODE-WEAK-HASH", "Broken hash algorithm (MD5/SHA-1)", M, "code", cwe="CWE-327", owasp=A04,
+R_WEAK_HASH = rule("CODE-WEAK-HASH", "Broken hash algorithm (MD5/SHA-1)", L, "code", cwe="CWE-327", owasp=A04,
                    fix="Use SHA-256 or better for integrity. If the hash is not security-relevant (cache keys, ETags), mark it explicitly (usedforsecurity=False) and suppress.",
                    confidence=0.5)
 R_WEAK_CIPHER = rule("CODE-WEAK-CIPHER", "Weak cipher or mode (DES, RC4, ECB, no IV)", H, "code", cwe="CWE-327", owasp=A04,
@@ -102,6 +102,15 @@ R_TEMPLATE = rule("CODE-TEMPLATE-AUTOESCAPE-OFF", "Template auto-escaping disabl
 R_BIDI = rule("CODE-TROJAN-SOURCE", "Bidirectional or invisible Unicode control characters in source", H, "code", cwe=("CWE-1007", "CWE-451"), owasp=A08,
               fix="Remove the characters. They make code render differently from how it compiles (Trojan Source, CVE-2021-42574) and hide instructions from human reviewers.",
               refs=("https://trojansource.codes/",))
+R_XPATH = rule("CODE-XPATH-INJECTION", "XPath query built from user input", H, "code", cwe="CWE-643", owasp=A05,
+                fix="Use parameterised XPath (lxml `xpath(query, name=value)` variables) or validate the value against a strict allow-list.")
+R_LDAP = rule("CODE-LDAP-INJECTION", "LDAP filter built from user input", H, "code", cwe="CWE-90", owasp=A05,
+              fix="Escape values with ldap3.utils.conv.escape_filter_chars (or equivalent) before building the filter.")
+R_TRUST = rule("CODE-TRUST-BOUNDARY", "User input stored in the server-side session", L, "code", cwe="CWE-501", owasp=A04,
+               fix="Validate and normalise request data before storing it in the session; code that later reads the session will trust it.",
+               confidence=0.6)
+R_XXE_FLOW = rule("CODE-XXE-ENABLED", "XML parsed with external entities enabled", H, "code", cwe="CWE-611", owasp=A02,
+                  fix="Do not enable external general/parameter entities (feature_external_ges/pes, resolve_entities=True); use defusedxml.")
 R_SANDBOX = rule("CODE-WEAK-SANDBOX", "Untrusted code run in a non-isolating sandbox", H, "code", cwe="CWE-94", owasp=A05,
                  fix="`vm`/`vm2` are not security boundaries (vm2 is discontinued after repeated escapes). Run untrusted code in a separate process or container, or use isolated-vm.")
 R_UPLOAD = rule("CODE-UNRESTRICTED-UPLOAD", "File upload without type, name or size restrictions", H, "code", cwe=("CWE-434", "CWE-770"), owasp=A06,
@@ -141,14 +150,9 @@ LINE_RULES: list[LineRule] = [
     lr(R_CODE_INJ, JS, r"\bset(?:Timeout|Interval)\s*\(\s*(?:`[^`]*\$\{|[\"'][^\"']*[\"']\s*\+)", "Timer called with a code string."),
     lr(R_CMD_INJ, JS, r"(?:(?<![\w.])|child_process\.|\bcp\.)(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+\s*\w)", "Shell command built by interpolation."),
     lr(R_SHELL_TRUE, JS, r"\bspawn(?:Sync)?\s*\([^)]*shell\s*:\s*true", "spawn() with shell: true."),
-    lr(R_SQLI, JS, r"(?:\.query|\.execute|\.raw|\$queryRawUnsafe|\$executeRawUnsafe|sequelize\.query|knex\.raw|\.prepare|sql\.unsafe)\s*\(\s*`[^`]*\$\{", "SQL text built with a template literal."),
     lr(R_SQLI, JS + JAVA + GO + CS + PY, r"[\"'`]\s*(?:SELECT\s[^\"'`]*\sFROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^\"'`]*[\"'`]\s*\+\s*[\w(]", "SQL text concatenated with a variable."),
-    lr(R_SQLI, JS, r"\$(?:queryRawUnsafe|executeRawUnsafe)\s*\(\s*(?!`[^`$]*`\s*[,)])", "Prisma *Unsafe raw query with a non-constant string."),
     lr(R_NOSQLI, JS, r"[\"']?\$where[\"']?\s*:", "MongoDB $where executes JavaScript on the server."),
     lr(R_NOSQLI, JS, r"\.(?:find|findOne|findOneAndUpdate|updateOne|updateMany|deleteOne|deleteMany|countDocuments)\(\s*(?:req|request)\.(?:body|query|params)\b", "Request object passed directly as a query filter (operator injection)."),
-    lr(R_XSS, JS, r"\.(?:innerHTML|outerHTML)\s*\+?=(?!=)\s*(?![\"'][^\"'$]*[\"']\s*;?\s*$)", "innerHTML/outerHTML assigned a dynamic value.", unless=r"DOMPurify|sanitize"),
-    lr(R_XSS, JS, r"\.insertAdjacentHTML\s*\(|document\.write(?:ln)?\s*\(", "Raw HTML inserted into the document.", unless=r"DOMPurify|sanitize"),
-    lr(R_XSS, JS, r"dangerouslySetInnerHTML", "React dangerouslySetInnerHTML.", unless=r"DOMPurify|sanitize"),
     lr(R_XSS, (".svelte",), r"\{@html\s", "Svelte {@html} renders unescaped markup.", unless=r"DOMPurify|sanitize|purify",
        file_unless=r"u003c|DOMPurify|sanitize-html|sanitizeHtml|xss\("),
     lr(R_XSS, (".vue",), r"\bv-html\s*=", "Vue v-html renders unescaped markup.", unless=r"DOMPurify|sanitize"),
@@ -169,7 +173,7 @@ LINE_RULES: list[LineRule] = [
     lr(R_COOKIE, JS, r"httpOnly\s*:\s*false", "Cookie readable from JavaScript."),
     lr(R_COOKIE, JS, r"\bsecure\s*:\s*false", "Cookie sent over plain HTTP.", unless=r"(?i)smtp|mail|tls|port"),
     lr(R_CSRF, JS, r"checkOrigin\s*:\s*false|trustedOrigins\s*:\s*\[\s*[\"']\*[\"']", "Origin/CSRF check disabled."),
-    lr(R_DEFAULT_SECRET, JS, r"process\.env\.\w*(?:SECRET|KEY|TOKEN|PASSWORD|SALT)\w*\s*(?:\|\||\?\?)\s*[\"'`][^\"'`]{3,}[\"'`]", "Secret with a hard-coded fallback."),
+    lr(R_DEFAULT_SECRET, JS, r"process\.env\.(?!NEXT_PUBLIC_|PUBLIC_|VITE_|REACT_APP_)\w*(?:SECRET|KEY|TOKEN|PASSWORD|SALT)(?!\w*(?:_ALIAS|_ID|_NAME|_PATH|_FILE|_URL|_REGION|_HOST|_PORT|_USER|_BUCKET|_MODEL|_VERSION)\b)\w*\s*(?:\|\||\?\?)\s*[\"'`][^\"'`]{3,}[\"'`]", "Secret with a hard-coded fallback."),
     lr(R_REGEX_INJ, JS, r"new\s+RegExp\s*\(\s*(?:" + _USER + r")", "RegExp built from request input."),
     lr(R_TOKEN_STORAGE, JS, r"localStorage\.setItem\(\s*[\"'`][^\"'`]*(?i:token|jwt|session|auth|access|refresh)", "Token written to localStorage."),
     lr(R_POSTMESSAGE, JS, r"\.postMessage\([^)]*,\s*[\"']\*[\"']\s*\)", "postMessage to any origin ('*')."),
@@ -289,10 +293,18 @@ def _catastrophic(pattern: str) -> bool:
     return False
 
 
-_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u2060-\u2064\ufeff\U000e0000-\U000e007f]")
+_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
 
 
-_JS_SOURCE = re.compile(r"(?:\breq|\brequest|ctx\.request|event\.request)\.(?:query|body|params|headers|cookies)\b|\burl\.searchParams\b|searchParams\.get\(|await\s+request\.(?:json|formData|text)\(\)|\bformData\.get\(|\bevent\.params\b|location\.(?:search|hash)\b|\bprocess\.argv\b")
+_JS_SOURCE = re.compile(r"(?:\breq|\brequest|ctx\.request|event\.request)\.(?:query|body|params|headers|cookies)\b|\burl\.searchParams\b|searchParams\.get\(|await\s+request\.(?:json|formData|text)\(\)|\bformData\.get\(|\bevent\.params\b|location\.(?:search|hash)\b")
+_DOM_SINK = re.compile(r"\.(innerHTML|outerHTML)\s*\+?=(?!=)\s*|\.(insertAdjacentHTML)\s*\(\s*[\"'`][\w-]+[\"'`]\s*,\s*|\b(document\.write(?:ln)?)\s*\(\s*")
+# Interpolations that are escaped, numeric, or produced by a markup helper of the app itself.
+_SAFE_INTERPOLATION = re.compile(
+    r"^\s*(?:\w+\.)?(?:esc|escape\w*|encode\w*|sanitize\w*|htmlEscape|textContent|icon|svg\w*|render\w*|t|i18n\.t|String\(Number|Number|parseInt|parseFloat|Math\.\w+|JSON\.stringify)\s*\("
+    r"|^\s*[\d.]+\s*$|\.(?:length|toFixed\(\d*\)|size|count)\s*$|^\s*(?:i|j|k|idx|index|n|count|total|done|pct|percent)\s*$"
+)
+_JS_SQL_CALL = re.compile(r"(?:\b(?:db|pool|client|conn|connection|sql|knex|sequelize|prisma|tx|trx|pg|mysql|database)\b[\w.]*\.(?:query|execute|raw|prepare|unsafe)|\$queryRawUnsafe|\$executeRawUnsafe|sql\.unsafe|knex\.raw|sequelize\.query|\.query|\.execute)\s*\(")
+_SQL_KEYWORD = re.compile(r"(?i)\b(?:select\s[\s\S]*?\sfrom|insert\s+into|update\s+[\w\"`.]+\s+set|delete\s+from|create\s+(?:table|index)|drop\s+table|alter\s+table|where\s)")
 _JS_DECL = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=;\n]+)?=\s*([^;\n]+)")
 _JS_DESTRUCT = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*(?::\s*[^=;\n]+)?=\s*([^;\n]+)")
 _JS_DYNAMIC_RHS = re.compile(r"^\s*`[^`]*\$\{|^\s*[\"'][^\"']*[\"']\s*\+\s*[A-Za-z_$]")
@@ -309,6 +321,86 @@ _JS_TAINT_SINKS = [
     (R_NOSQLI, r"\.(?:find|findOne|findOneAndUpdate|updateOne|updateMany|deleteOne|deleteMany|countDocuments)\(\s*({N})\s*[,)]", "taint", "query filter `{v}` is a raw request object"),
     (R_REGEX_INJ, r"new\s+RegExp\s*\(\s*({N})\b", "taint", "pattern `{v}` comes from request data"),
 ]
+
+
+def _js_expression(text: str, start: int) -> str:
+    """Return the JS expression starting at `start` up to the end of the statement.
+    A stack keeps template literals, `${}` holes and brackets apart, so multi-line
+    templates inside calls (`rows.map(r => `...`)`) are read whole."""
+    stack: list[str] = []  # entries: "`" template, "${" hole, or an opening bracket
+    k, n, quote = start, len(text), ""
+    pairs = {")": "(", "]": "[", "}": "{"}
+    while k < n and k - start <= 4000:
+        ch = text[k]
+        top = stack[-1] if stack else ""
+        if quote:
+            if ch == "\\":
+                k += 2; continue
+            if ch == quote:
+                quote = ""
+        elif top == "`":
+            if ch == "\\":
+                k += 2; continue
+            if ch == "`":
+                stack.pop()
+            elif text.startswith("${", k):
+                stack.append("${"); k += 2; continue
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "`":
+            stack.append("`")
+        elif ch in "([{":
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack:
+                break
+            if ch == "}" and top == "${":
+                stack.pop()
+            elif pairs[ch] == top:
+                stack.pop()
+            else:
+                break
+        elif ch in ";\n" and not stack and not text[k + 1:k + 40].lstrip().startswith(("+", "?", ":", ".")):
+            break
+        k += 1
+    return text[start:k].strip()
+
+
+def taint_reaches(name: str, assigned_line: int, use_line: int) -> bool:
+    """File-level tracking has no scopes, so bound it by distance: a short, common name
+    like `v` or `d` only links to an assignment a few lines above its use."""
+    gap = use_line - assigned_line
+    return 0 < gap <= (15 if len(name) <= 2 else 80)
+
+
+def _ternary_of_literals(expr: str) -> bool:
+    # greedy prefix: the last `?` is the ternary, so `x?.state === 'a' ? 'b' : 'c'` works
+    return bool(re.fullmatch(r"""(?s).*\?\s*(?:'[^']*'|"[^"]*"|`[^`$]*`)\s*:\s*(?:'[^']*'|"[^"]*"|`[^`$]*`)\s*""", expr.strip()))
+
+
+def _numeric(expr: str) -> bool:
+    """Arithmetic over names and numbers can only produce a number, never markup."""
+    e = expr.strip()
+    return "'" not in e and '"' not in e and "`" not in e and bool(re.fullmatch(r"[\w$.\s()\[\]?+*/%-]+", e)) \
+        and bool(re.search(r"[*/%]|[-+]\s*\d|\d\s*[-+]", e))
+
+
+def unsafe_leaves(expr: str) -> list[str]:
+    """Values that end up in the markup unescaped. Nested templates are opened and their
+    own interpolations judged, so `rows.map(r => `<td>${esc(r.x)}</td>`)` is safe."""
+    expr = expr.strip()
+    if not expr or _SAFE_INTERPOLATION.search(expr) or _ternary_of_literals(expr) or _numeric(expr):
+        return []
+    templates = re.findall(r"`((?:[^`\\]|\\.)*)`", expr)
+    if templates:
+        out: list[str] = []
+        for body in templates:
+            for inner in re.findall(r"\$\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}", body):
+                out += unsafe_leaves(inner)
+        return out
+    if re.fullmatch(r"""\s*(?:'[^']*'|"[^"]*"|[\d.]+|true|false|null)\s*""", expr):
+        return []
+    return [expr]
 
 
 def js_tracked_names(text: str) -> tuple[dict[str, int], dict[str, int]]:
@@ -340,12 +432,26 @@ class CodeScanner:
     name = "code"
 
     def scan(self, ctx: ScanContext) -> Iterator[Finding]:
+        trees: dict[str, ast.Module] = {}
+        for rel in ctx.by_suffix(*PY):
+            text = ctx.text(rel)
+            if text and len(text) < 2_000_000:
+                try:
+                    trees[rel] = ast.parse(text, filename=rel)
+                except (SyntaxError, ValueError):
+                    pass
+        index = None
+        if trees:
+            from rempart.pyflow import build_index
+
+            index = build_index(trees)
         for rel in ctx.by_suffix(*ALL_CODE):
             text = ctx.text(rel)
             if not text:
                 continue
             if rel.endswith(PY):
-                yield from PythonAnalyzer(rel, text).run()
+                if rel in trees:
+                    yield from PythonAnalyzer(rel, text, index, trees[rel]).run()
             yield from self._line_rules(rel, text)
             yield from self._file_rules(rel, text)
 
@@ -367,6 +473,9 @@ class CodeScanner:
                     continue
                 if r.rule is R_RANDOM and not _SECRET_CTX.search(line):
                     continue
+                if r.rule is R_WEAK_HASH and re.search(r"(?i)sign|hmac|auth|verif|token|secret|integrity|checksum.*download|cert", line):
+                    yield Finding(r.rule, rel, i, r.message + " Used in a security context.", snippet=line.strip()[:240], severity=Severity.MEDIUM)
+                    continue
                 if r.rule is R_RANDOM and lower.endswith(GO) and not uses_math_rand:
                     continue
                 if r.rule is R_COOKIE and not _SESSION_CTX.search("\n".join(all_lines[max(0, i - 8): i + 3])):
@@ -374,6 +483,100 @@ class CodeScanner:
                 if r.rule in (R_CMD_INJ, R_SHELL_TRUE) and lower.endswith(JS) and not _JS_EXEC_IMPORT.search(text):
                     continue
                 yield Finding(r.rule, rel, i, r.message, snippet=line.strip()[:240])
+
+    def _dom_html(self, rel: str, text: str) -> Iterator[Finding]:
+        """innerHTML / outerHTML / insertAdjacentHTML / document.write, judged on what is
+        interpolated: constant markup is fine, escaped values are fine, raw values are not."""
+        tainted, _ = js_tracked_names(text)
+        lines = text.splitlines()
+        for m in _DOM_SINK.finditer(text):
+            ln = line_of(text, m.start())
+            line = lines[ln - 1] if ln <= len(lines) else ""
+            if is_comment(line):
+                continue
+            rhs = _js_expression(text, m.end())
+            if not rhs or re.search(r"DOMPurify|sanitize|purify", rhs):
+                continue
+            concatenated = re.findall(r"(?:^|\+)\s*([A-Za-z_$][\w$.\[\]'\"]*(?:\([^)]*\))?)\s*(?=\+|$)", re.sub(r"`[^`]*`|'[^']*'|\"[^\"]*\"", "", rhs))
+            raw = unsafe_leaves(rhs) if "`" in rhs else []
+            raw += [p.strip() for p in concatenated if p.strip() and unsafe_leaves(p)]
+            if not raw and "`" not in rhs and not concatenated and not re.fullmatch(r"""\s*(?:'[^']*'|"[^"]*")\s*;?""", rhs):
+                raw = unsafe_leaves(rhs)  # a bare identifier or call
+            if not raw:
+                continue  # constant markup, or every value escaped / produced by a markup helper
+            sink = m.group(1) or m.group(2) or m.group(3)
+            snippet = line.strip()[:240]
+            live = [n for n, at in tainted.items() if taint_reaches(n, at, ln)]
+            names = "|".join(map(re.escape, live))
+            if live and any(re.search(rf"\b(?:{names})\b", p) for p in raw):
+                yield Finding(R_XSS, rel, ln, f"Request data reaches {sink} unescaped (`{raw[0][:50]}`).", snippet=snippet, severity=Severity.HIGH, confidence=0.85)
+            else:
+                first = " ".join(raw[0].split())[:50]
+                yield Finding(R_XSS, rel, ln, f"{sink} interpolates `{first}` without escaping: safe only if it can never hold external data.",
+                              snippet=snippet, severity=Severity.MEDIUM, confidence=0.5)
+
+    def _react_html(self, rel: str, text: str) -> Iterator[Finding]:
+        """Judge dangerouslySetInnerHTML by the value given to __html instead of by its name."""
+        tainted, _ = js_tracked_names(text)
+        lines = text.splitlines()
+        for m in re.finditer(r"dangerouslySetInnerHTML\s*=\s*\{\{\s*__html\s*:\s*", text):
+            expr = text[m.end(): m.end() + 200].split("}}")[0].strip()
+            ln = line_of(text, m.start())
+            snippet = lines[ln - 1].strip()[:240] if ln <= len(lines) else ""
+            if not expr or re.match(r"""^(?:["'][^"']*["']|`[^`$]*`)\s*$""", expr) or re.search(r"DOMPurify|sanitize|purify|escapeHtml|xss\(", expr):
+                continue
+            ident = re.match(r"^([A-Za-z_$][\w$]*)$", expr)
+            if ident and re.search(rf"(?:const|let|var)\s+{re.escape(ident.group(1))}\s*=\s*(?:[\"'][^\"']*[\"']|`[^`$]*`)\s*;?", text):
+                continue  # constant markup defined in this file
+            if expr.startswith("JSON.stringify("):
+                if "u003c" in text or ".replace(/</g" in text:
+                    continue
+                yield Finding(R_XSS, rel, ln, "JSON rendered into raw HTML without escaping `<` (a `</script>` in the data breaks out).", snippet=snippet,
+                              severity=Severity.LOW, confidence=0.4)
+                continue
+            live = [n for n, at in tainted.items() if taint_reaches(n, at, ln)]
+            if live and re.search(r"\b(?:" + "|".join(map(re.escape, live)) + r")\b", expr):
+                yield Finding(R_XSS, rel, ln, f"Request data reaches dangerouslySetInnerHTML (`{expr[:60]}`).", snippet=snippet, severity=Severity.HIGH, confidence=0.85)
+                continue
+            yield Finding(R_XSS, rel, ln, f"dangerouslySetInnerHTML with `{expr[:60]}`: confirm the value can never contain user input.", snippet=snippet,
+                          severity=Severity.LOW, confidence=0.4)
+
+    def _js_sql_templates(self, rel: str, text: str) -> Iterator[Finding]:
+        """Read the whole first argument of a SQL-ish call (template literals span lines) and
+        flag it only when it is SQL *and* interpolates a value, or is not a literal at all
+        for the *Unsafe Prisma APIs."""
+        for m in _JS_SQL_CALL.finditer(text):
+            start = m.end()
+            while start < len(text) and text[start] in " \t\r\n":
+                start += 1
+            ln = line_of(text, m.start())
+            line = text.splitlines()[ln - 1] if ln <= text.count("\n") + 1 else ""
+            if is_comment(line):
+                continue
+            opener = text[start:start + 1]
+            unsafe_api = "Unsafe" in m.group(0) or "unsafe" in m.group(0)
+            if opener == "`":
+                body, k, depth = [], start + 1, 0
+                while k < len(text):
+                    ch = text[k]
+                    if ch == "\\":
+                        body.append(text[k:k + 2]); k += 2; continue
+                    if ch == "`" and depth == 0:
+                        break
+                    if text.startswith("${", k):
+                        depth += 1
+                    elif ch == "}" and depth:
+                        depth -= 1
+                    body.append(ch); k += 1
+                literal = "".join(body)
+                if "${" in literal and _SQL_KEYWORD.search(literal):
+                    yield Finding(R_SQLI, rel, ln, "SQL text built with a template literal.", snippet=line.strip()[:240])
+            elif opener in "\"'":
+                continue  # constant string
+            elif unsafe_api:
+                f = Finding(R_SQLI, rel, ln, "Prisma *Unsafe raw query with a non-literal argument.", snippet=line.strip()[:240])
+                f.confidence = 0.5
+                yield f
 
     def _js_taint(self, rel: str, text: str) -> Iterator[Finding]:
         tainted, dynamic = js_tracked_names(text)
@@ -391,8 +594,8 @@ class CodeScanner:
             for m in rx.finditer(text):
                 v = next(g for g in m.groups() if g)
                 ln = text.count("\n", 0, m.start()) + 1
-                if ln <= names[v]:
-                    continue  # use must come after the assignment
+                if not taint_reaches(v, names[v], ln):
+                    continue  # use must follow the assignment, close enough to plausibly be the same scope
                 line = lines[ln - 1] if ln <= len(lines) else ""
                 if is_comment(line) or re.search(r"DOMPurify|sanitize|escape|parseInt|Number\(|encodeURIComponent|basename\(", line):
                     continue
@@ -404,8 +607,6 @@ class CodeScanner:
     def _file_rules(self, rel: str, text: str) -> Iterator[Finding]:
         # Trojan Source / invisible characters
         for m in _BIDI.finditer(text):
-            if m.group(0) == "\ufeff" and m.start() == 0:
-                continue
             ln = line_of(text, m.start())
             yield Finding(R_BIDI, rel, ln, f"Invisible/bidi control character U+{ord(m.group(0)):04X}.", snippet=f"U+{ord(m.group(0)):04X}")
             break
@@ -416,6 +617,9 @@ class CodeScanner:
                 ln = line_of(text, m.start())
                 yield Finding(R_REDOS, rel, ln, "Nested quantifier in a regular expression.", snippet=body[:120])
         if rel.endswith(JS):
+            yield from self._react_html(rel, text)
+            yield from self._dom_html(rel, text)
+            yield from self._js_sql_templates(rel, text)
             yield from self._js_taint(rel, text)
         if rel.endswith(JS) and re.search(r"(?:^|/)(?:api|routes?|server|controllers?|handlers?|app)/|\+(?:page\.)?server\.[jt]s$|route\.[jt]s$", rel):
             lines = text.splitlines()
@@ -517,74 +721,73 @@ def _kw_is(call: ast.Call, name: str, value: object) -> bool:
 
 
 class PythonAnalyzer(ast.NodeVisitor):
-    """Single pass over the module. Each function gets a scope that records
-    variables assigned from request data (`tainted`) and variables holding
-    strings built by interpolation (`dynamic`), so `q = f"...{x}"; cur.execute(q)`
-    and `url = request.args["u"]; requests.get(url)` are both caught."""
+    """Two layers. Pattern checks that do not depend on where data comes from (TLS
+    verification, broken hashes, JWT options, debug flags, settings) run as an AST
+    visitor. Everything that does depend on it (injection, SSRF, paths, redirects,
+    deserialisation, XSS, session, cookies, weak randomness) goes through the
+    data-flow engine in `rempart.pyflow`, which follows values through variables,
+    containers, branches and validation guards."""
 
-    def __init__(self, rel: str, text: str) -> None:
+    def __init__(self, rel: str, text: str, index: Any = None, tree: ast.Module | None = None) -> None:
         self.rel = rel
+        self.index = index
+        self.tree = tree
         self.text = text
         self.lines = text.splitlines()
         self.out: list[Finding] = []
         self.is_settings = rel.endswith(("settings.py", "config.py")) or "/settings/" in rel
-        self.scopes: list[dict[str, set[str]]] = [{"tainted": set(), "dynamic": set()}]
-
-    @property
-    def tainted(self) -> set[str]:
-        return self.scopes[-1]["tainted"]
-
-    @property
-    def dynamic(self) -> set[str]:
-        return self.scopes[-1]["dynamic"]
-
-    def _dyn(self, node: ast.AST | None) -> bool:
-        return _is_dynamic_str(node) or (isinstance(node, ast.Name) and node.id in self.dynamic)
-
-    def _req(self, node: ast.AST | None) -> bool:
-        return _touches_request(node, self.tainted)
-
-    def _track(self, targets: list[ast.expr], value: ast.AST) -> None:
-        names: list[str] = []
-        for t in targets:
-            for sub in ast.walk(t):
-                if isinstance(sub, ast.Name):
-                    names.append(sub.id)
-        if not names:
-            return
-        if self._req(value):
-            self.tainted.update(names)
-        if _is_dynamic_str(value) or (isinstance(value, ast.Name) and value.id in self.dynamic):
-            self.dynamic.update(names)
+        self._seen: set[tuple[str, int, int]] = set()
 
     def run(self) -> list[Finding]:
-        try:
-            tree = ast.parse(self.text, filename=self.rel)
-        except (SyntaxError, ValueError):
-            return []
+        tree = self.tree
+        if tree is None:
+            try:
+                tree = ast.parse(self.text, filename=self.rel)
+            except (SyntaxError, ValueError):
+                return []
         self.visit(tree)
+        from rempart.pyflow import analyse_module
+
+        analyse_module(tree, self._flow_report, self.index)
         return self.out
 
-    def add(self, r: Rule, node: ast.AST, message: str) -> None:
+    def add(self, r: Rule, node: ast.AST, message: str, severity: Severity | None = None, confidence: float | None = None,
+            extra: dict | None = None) -> None:
         ln = getattr(node, "lineno", 1)
+        key = (r.id, ln, getattr(node, "col_offset", 0))
+        if key in self._seen:
+            return
+        self._seen.add(key)
         snippet = self.lines[ln - 1].strip()[:240] if 0 < ln <= len(self.lines) else ""
-        self.out.append(Finding(r, self.rel, ln, message, snippet=snippet))
+        self.out.append(Finding(r, self.rel, ln, message, snippet=snippet, severity=severity, confidence=confidence, extra=extra or {}))
 
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if node.value is not None:
-            self._track([node.target], node.value)
-        self.generic_visit(node)
+    # data-flow engine results -> rules and severities
+    _FLOW_RULES = {
+        "sql": "R_SQLI", "cmd": "R_CMD_INJ", "shell": "R_SHELL_TRUE", "code": "R_CODE_INJ", "path": "R_PATH", "redirect": "R_REDIRECT",
+        "ssrf": "R_SSRF", "xpath": "R_XPATH", "ldap": "R_LDAP", "deser": "R_DESER", "trust": "R_TRUST", "regex": "R_REGEX_INJ",
+        "template": "R_TEMPLATE", "xxe": "R_XXE_FLOW", "cookie": "R_COOKIE", "weakrand": "R_RANDOM", "xss": "R_XSS",
+    }
 
-    def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        # x += f"...{y}"  or  sql += user_value
-        if isinstance(node.target, ast.Name) and (self._req(node.value) or _is_dynamic_str(node.value) or isinstance(node.value, (ast.Name, ast.Attribute, ast.Subscript))):
-            self.dynamic.add(node.target.id)
-            if self._req(node.value):
-                self.tainted.add(node.target.id)
-        self.generic_visit(node)
+    def _flow_report(self, cat: str, node: ast.AST, message: str, extra: dict) -> None:
+        r: Rule = globals()[self._FLOW_RULES[cat]]
+        tainted = bool(extra.get("tainted"))
+        severity: Severity | None = None
+        confidence: float | None = None
+        if tainted:
+            severity = max(r.severity, Severity.HIGH) if cat not in ("trust",) else r.severity
+            confidence = 0.9
+        elif cat in ("code", "cmd", "sql"):
+            severity, confidence = (Severity.INFO, 0.3) if extra.get("validated") else (Severity.MEDIUM, 0.5)
+        elif cat == "deser":
+            severity, confidence = Severity.INFO, 0.4
+        elif cat == "xxe":
+            severity, confidence = Severity.MEDIUM, 0.5
+        elif cat == "shell" and extra.get("constant"):
+            severity, confidence = Severity.LOW, 0.5
+        self.add(r, node, message, severity=severity, confidence=confidence, extra={"dataflow": "tainted" if tainted else "pattern"})
 
+    # ------------------------------------------------------------ pattern layer
     def visit_Assign(self, node: ast.Assign) -> None:
-        self._track(list(node.targets), node.value)
         names = [t.id for t in node.targets if isinstance(t, ast.Name)]
         names += [t.attr for t in node.targets if isinstance(t, ast.Attribute)]
         for name in names:
@@ -605,12 +808,7 @@ class PythonAnalyzer(ast.NodeVisitor):
             name = _dotted(dec.func if isinstance(dec, ast.Call) else dec)
             if name.endswith("csrf_exempt"):
                 self.add(R_CSRF, dec, f"@csrf_exempt on {node.name}().")
-        # FastAPI-style handlers: parameters of route functions are request data.
-        route = any(re.search(r"\.(?:get|post|put|patch|delete|route|api_route|websocket)$", _dotted(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list)
-        params = {a.arg for a in node.args.args + node.args.kwonlyargs} - {"self", "cls", "request", "db", "session"} if route else set()
-        self.scopes.append({"tainted": set(params), "dynamic": set()})
         self.generic_visit(node)
-        self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
@@ -620,38 +818,17 @@ class PythonAnalyzer(ast.NodeVisitor):
         mod = name.split(".")[0] if "." in name else ""
         arg0 = node.args[0] if node.args else None
 
-        if name in ("eval", "exec") and arg0 is not None and not _is_constant(arg0):
-            self.add(R_CODE_INJ, node, f"{name}() on a non-constant value.")
-        if mod == "subprocess" or name in ("Popen", "check_output", "check_call"):
-            if _kw_is(node, "shell", True):
-                if self._dyn(arg0) or self._req(arg0):
-                    self.add(R_CMD_INJ, node, "shell=True with an interpolated command.")
-                else:
-                    self.add(R_SHELL_TRUE, node, "subprocess call with shell=True.")
-        if name in ("os.system", "os.popen", "commands.getoutput") and arg0 is not None and not _is_constant(arg0) and (self._dyn(arg0) or self._req(arg0) or not isinstance(arg0, ast.Name)):
-            self.add(R_CMD_INJ, node, f"{name}() with a non-constant command.")
-        if (mod, short) in _PY_DESER or name in {f"{a}.{b}" for a, b in _PY_DESER}:
-            if not (short == "load" and mod == "torch" and _kw_is(node, "weights_only", True)):
-                self.add(R_DESER, node, f"{name}() can execute code embedded in the data.")
-        if name in ("yaml.load", "yaml.load_all"):
-            loader = _kw(node, "Loader") or (node.args[1] if len(node.args) > 1 else None)
-            if loader is None or "Safe" not in _dotted(loader):
-                self.add(R_DESER, node, "yaml.load without SafeLoader.")
-        if short in _PY_SQL_SINKS and isinstance(node.func, ast.Attribute) and self._dyn(arg0):
-            via = f" (built earlier in `{arg0.id}`)" if isinstance(arg0, ast.Name) else ""
-            self.add(R_SQLI, node, f".{short}() with an interpolated SQL string{via}.")
-        if name in ("text", "sqlalchemy.text", "sa.text") and self._dyn(arg0):
-            self.add(R_SQLI, node, "sqlalchemy text() with an interpolated string.")
         if _kw_is(node, "verify", False) and mod in ("requests", "httpx", "session", "client", "s", "aiohttp", ""):
             self.add(R_TLS, node, "verify=False disables certificate checks.")
         if name in ("ssl._create_unverified_context",) or (isinstance(node.func, ast.Attribute) and short == "_create_unverified_context"):
             self.add(R_TLS, node, "Unverified SSL context.")
-        if name in ("hashlib.md5", "hashlib.sha1", "md5", "sha1") and not _kw_is(node, "usedforsecurity", False):
-            arg_src = ast.unparse(arg0) if arg0 is not None else ""
-            if re.search(r"(?i)passw", arg_src):
+        weak_new = name == "hashlib.new" and isinstance(arg0, ast.Constant) and str(arg0.value).lower() in ("md5", "sha1", "md4", "sha-1")
+        if (name in ("hashlib.md5", "hashlib.sha1", "md5", "sha1") or weak_new) and not _kw_is(node, "usedforsecurity", False):
+            data = node.args[1] if weak_new and len(node.args) > 1 else (arg0 if not weak_new else None)
+            if data is not None and re.search(r"(?i)passw", ast.unparse(data)):
                 self.add(R_PWD_HASH, node, f"Password hashed with {short}.")
             else:
-                self.add(R_WEAK_HASH, node, f"{name}() in use.")
+                self.add(R_WEAK_HASH, node, f"{name}({ast.unparse(arg0) if weak_new else ''}) in use.")
         if name in ("hashlib.sha256", "hashlib.sha512") and arg0 is not None and re.search(r"(?i)passw", ast.unparse(arg0)):
             self.add(R_PWD_HASH, node, f"Password hashed with {short}.")
         if mod in ("jwt",) and short == "decode":
@@ -669,17 +846,9 @@ class PythonAnalyzer(ast.NodeVisitor):
             self.add(R_TEMPLATE, node, "Jinja2 autoescape=False.")
         if short in ("mark_safe", "Markup") and arg0 is not None and not _is_constant(arg0):
             self.add(R_TEMPLATE, node, f"{short}() on a dynamic value.")
-        if short == "render_template_string" and arg0 is not None and not _is_constant(arg0):
-            self.add(R_TEMPLATE, node, "render_template_string with a dynamic template (SSTI).")
-        if mod in ("requests", "httpx", "urllib", "urllib.request", "aiohttp") or name == "urlopen":
-            if (short in _REQUESTS_FUNCS or short == "urlopen") and self._req(arg0 if arg0 is not None else _kw(node, "url")):
-                self.add(R_SSRF, node, f"{name}() to a URL taken from the request.")
-        if name in ("open", "send_file", "send_from_directory", "FileResponse", "os.remove", "shutil.rmtree", "pathlib.Path", "Path") and self._req(arg0):
-            self.add(R_PATH, node, f"{name}() with a path from the request.")
-        if short in ("redirect", "RedirectResponse", "HttpResponseRedirect") and self._req(arg0):
-            self.add(R_REDIRECT, node, "redirect() to a URL from the request.")
-        if name in ("re.compile", "re.match", "re.search") and self._req(arg0):
-            self.add(R_REGEX_INJ, node, "Regular expression built from request input.")
-        if name in ("xml.etree.ElementTree.parse", "ET.parse", "ET.fromstring", "etree.parse", "etree.fromstring", "minidom.parse", "minidom.parseString", "xml.dom.minidom.parseString"):
-            self.add(R_XXE, node, f"{name}() without defusedxml.")
+        if name in ("xml.etree.ElementTree.parse", "ET.parse", "ET.fromstring", "etree.parse", "etree.fromstring", "minidom.parse", "minidom.parseString",
+                    "xml.dom.minidom.parseString", "xml.dom.minidom.parse", "lxml.etree.parse", "lxml.etree.fromstring"):
+            # Python's stdlib parsers do not resolve external entities by default; the
+            # data-flow layer reports the real XXE (a parser with external entities enabled).
+            self.add(R_XXE, node, f"{name}(): prefer defusedxml for untrusted XML (entity expansion).", severity=Severity.INFO, confidence=0.3)
         self.generic_visit(node)

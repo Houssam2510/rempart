@@ -45,6 +45,7 @@ R_COMPOSE_SECRET = rule("COMPOSE-SECRET-LITERAL", "Credential written in docker-
                         fix="Use an env_file that is git-ignored, `${VAR}` substitution, or compose secrets.")
 
 _SECRET_NAME = re.compile(r"(?i)(?:password|passwd|secret|token|api_?key|access_?key|private_?key|credentials?)")
+_DEV_DEFAULTS = {"postgres", "password", "example", "secret", "root", "admin", "changeme", "mysql", "mongo", "redis", "test", "dev", "local", "pass", "guest"}
 _DATA_PORTS = {"3306", "5432", "27017", "6379", "9200", "11211", "1433", "5984", "9042", "8086", "7474", "5672", "9092", "2181", "8123"}
 
 
@@ -179,12 +180,19 @@ class ContainerScanner:
                 target = parts[-1].split("/")[0]
                 bound_local = len(parts) == 3 and parts[0] in ("127.0.0.1", "localhost", "::1")
                 if target in _DATA_PORTS and not bound_local:
-                    yield Finding(R_COMPOSE_DB_PORT, rel, ln(p, base - 1), f"service `{name}` publishes {target} on 0.0.0.0.", snippet=p)
+                    yield Finding(R_COMPOSE_DB_PORT, rel, ln(p, base - 1),
+                                  f"service `{name}` publishes {target} on 0.0.0.0 (on a server, Docker bypasses ufw/iptables rules).", snippet=p,
+                                  extra={"resource": f"compose:{name}"}, severity=Severity.MEDIUM)
             env = svc.get("environment") or {}
             items: list[tuple[str, Any]] = list(env.items()) if isinstance(env, dict) else [tuple(e.split("=", 1)) if "=" in e else (e, None) for e in env]  # type: ignore[misc]
             for key, val in items:
                 if _SECRET_NAME.search(str(key)) and val not in (None, "") and not str(val).startswith("$"):
-                    yield Finding(R_COMPOSE_SECRET, rel, ln(str(key), base - 1), f"service `{name}`: {key} is a literal.", snippet=f"{key}: ****")
+                    f = Finding(R_COMPOSE_SECRET, rel, ln(str(key), base - 1), f"service `{name}`: {key} is a literal.", snippet=f"{key}: ****",
+                                extra={"resource": f"compose:{name}"})
+                    if str(val).lower() in _DEV_DEFAULTS:
+                        f.severity, f.confidence = Severity.LOW, 0.6
+                        f.message += " It is a well-known default: fine for a local dev stack, never deploy this file as-is."
+                    yield f
             image = str(svc.get("image") or "")
             if image and "@sha256:" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest")):
                 yield Finding(R_LATEST, rel, ln(image, base - 1), f"service `{name}` image `{image}` is not pinned.", snippet=f"image: {image}")

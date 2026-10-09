@@ -205,3 +205,30 @@ class RegexExecRegressionTest(unittest.TestCase):
         self.assertNotIn("CODE-CMD-INJECTION", rule_ids(scan_tree({"src/lib/server/auth.ts": src}, ["code"])))
         src2 = "import { exec } from 'node:child_process';\nconst name = req.query.name;\nexec(name);\n"
         self.assertIn("CODE-CMD-INJECTION", rule_ids(scan_tree({"x.js": src2}, ["code"])))
+
+
+class DomHtmlPrecisionTest(unittest.TestCase):
+    """innerHTML judged on what is interpolated (regressions from scanning a real vanilla-JS app)."""
+
+    def test_safe_and_unsafe_interpolations(self):
+        src = (
+            "const esc = (s) => String(s).replace(/[&<>]/g, '');\n"
+            "a.innerHTML = '<b>static</b>';\n"
+            "b.innerHTML = `<p>${esc(offer.title)}</p>`;\n"
+            "c.innerHTML = `<i class=\"${done ? 'on' : ''}\">${step + 1}</i>`;\n"
+            "d.insertAdjacentHTML('beforeend', `<span class=\"${x?.state === 'ok' ? 'good' : 'warn'}\"></span>`);\n"
+            "e.innerHTML = rows.map((r) => `<td>${esc(r.name)}</td>`).join('');\n"
+            "f.innerHTML = `<h2>${offer.title}</h2>`;\n"
+        )
+        got = [(f.line, f.severity.name) for f in scan_tree({"src/ui/view.js": src}, ["code"]).findings if f.rule.id == "CODE-XSS-SINK"]
+        self.assertEqual(got, [(7, "MEDIUM")])
+
+    def test_request_data_into_innerhtml_is_high(self):
+        src = "const name = new URL(location.href).searchParams.get('n');\nel.innerHTML = `<b>${name}</b>`;\n"
+        got = [(f.line, f.severity.name) for f in scan_tree({"src/page.js": src}, ["code"]).findings if f.rule.id == "CODE-XSS-SINK"]
+        self.assertEqual(got, [(2, "HIGH")])
+
+    def test_short_names_do_not_taint_across_the_file(self):
+        src = "const v = req.query.q;\n" + "\n" * 40 + "for (const v of VIEWS) { s.innerHTML = v.html; }\n"
+        sev = {f.severity.name for f in scan_tree({"src/app.js": src}, ["code"]).findings if f.rule.id == "CODE-XSS-SINK"}
+        self.assertNotIn("HIGH", sev)

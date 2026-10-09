@@ -15,6 +15,7 @@ import re
 from typing import Iterator
 
 from rempart.engine import ScanContext, is_comment
+from rempart.scanners.secrets import entropy
 from rempart.models import Finding, Severity
 from rempart.registry import A01, A02, A04, A07, A09, C, H, L, M, rule
 
@@ -61,7 +62,10 @@ R_UNBOUNDED = rule("PERF-UNBOUNDED-QUERY", "Unbounded query loads an entire coll
                    confidence=0.5)
 
 _CONN = re.compile(r"\b(mongodb(?:\+srv)?|postgres(?:ql)?|mysql|mariadb|redis|rediss|amqps?|mssql|sqlserver|clickhouse|cockroachdb|neo4j(?:\+s)?)://([^:/\s@'\"`]+):([^@\s'\"`]+)@([^/\s'\"`?:]+)")
-_PLACEHOLDER = re.compile(r"(?i)^(?:\$\{?.*|<.*>|\*+|x+|password|pass|pwd|secret|changeme|example|user|admin|root|test|\{.*\}|%s|:\w+)$")
+_PLACEHOLDER = re.compile(r"(?i)^(?:\$\{?.*|<.*>|\[.*\]|\*+|x+|\.{3,}|password|pass|pwd|secret|changeme|example|user|admin|root|test|token|\{.*\}|%s|:\w+|your[\w-]*|my[\w-]*password)$")
+# an all-caps word (TOKEN, YOUR_PASSWORD, DB_PASS) is documentation, not a credential
+_UPPER_PLACEHOLDER = re.compile(r"^[A-Z][A-Z0-9_\-]{2,}$")
+_PLACEHOLDER_HOST = re.compile(r"(?i)x{3,}|example|your[-_]|<|\[|\{")
 _LOCAL_HOSTS = re.compile(r"^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|db|database|postgres|mongo|mongodb|redis|mysql|mariadb|host\.docker\.internal|\w+-db)$")
 _LOG_CALL = re.compile(r"\b(?:console\.(?:log|info|warn|error|debug)|logger\.\w+|logging\.\w+|log\.(?:info|debug|warn|warning|error)|print|println!?|fmt\.Print\w*|System\.out\.print\w*)\s*\(")
 _SENSITIVE_VAR = re.compile(r"(?i)\b(?:password|passwd|pwd|secret|token|access_?token|refresh_?token|authorization|api_?key|apikey|ssn|sin|credit_?card|card_?number|cvv|private_?key)\b|req\.headers|request\.headers|req\.body|request\.body")
@@ -126,9 +130,14 @@ class DataScanner:
                 continue
             for m in _CONN.finditer(line):
                 scheme, user, pwd, host = m.groups()
-                if _PLACEHOLDER.match(pwd) or pwd.startswith(("${", "$(", "{{")):
+                if _PLACEHOLDER.match(pwd) or _UPPER_PLACEHOLDER.match(pwd) or pwd.startswith(("${", "$(", "{{")) \
+                        or _PLACEHOLDER_HOST.search(host) or _PLACEHOLDER_HOST.search(user):
                     continue
-                sev = Severity.MEDIUM if _LOCAL_HOSTS.match(host.lower()) else None
+                local = bool(_LOCAL_HOSTS.match(host.lower()))
+                if local and (re.search(r"(?i)\.(?:example|sample|template|dist)$|(?:^|/)docs?/|\.md$|readme|\.github/workflows/|scripts?/|seed|e2e|test", rel)
+                              or len(pwd) < 12 or entropy(pwd) < 3.5):
+                    continue  # a local database with a local password: not a leaked production credential
+                sev = Severity.MEDIUM if local else None
                 f = Finding(R_CONN, rel, i, f"{scheme} URL for host `{host}` embeds the password.",
                             snippet=line.strip().replace(pwd, "****")[:200], extra={"anchor": f"{scheme}:{user}@{host}"})
                 if sev is not None:

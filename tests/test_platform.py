@@ -75,7 +75,7 @@ class LearningTest(unittest.TestCase):
 
     def test_cli_end_to_end(self):
         root = tempfile.mkdtemp()
-        Path(root, "app.py").write_text("import os\nos.system('rm ' + name)\n")
+        Path(root, "app.py").write_text("import os\nfrom flask import request\nos.system('rm ' + request.args['f'])\n")
         out = Path(root, "r.sarif")
         code = main(["scan", root, "--offline", "-f", "sarif", "-o", str(out), "--fail-on", "high"])
         self.assertEqual(code, 1)

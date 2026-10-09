@@ -68,11 +68,18 @@ MCP_FILES = re.compile(r"(?:^|/)(?:\.?[\w-]*mcp[\w-]*\.json|[\w-]*desktop_config
 # (documentation folders excluded).
 _STANDARD_DOCS = "README|LICENSE|LICENCE|CHANGELOG|CHANGES|HISTORY|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|AUTHORS|NOTICE|SUPPORT|GOVERNANCE|MAINTAINERS|TODO|ROADMAP|UPGRADING|MIGRATION|FAQ|INSTALL|USAGE"
 AGENT_RULE_FILES = re.compile(
-    r"^(?!(?:[^/]*/)*docs?/)(?:.*/)?(?:(?-i:(?!(?:" + _STANDARD_DOCS + r")\.md$)[A-Z][A-Z0-9_-]{2,15}\.md)|\.[\w-]*rules|copilot-instructions\.md"
+    r"^(?!(?:[^/]*/)*docs?/)(?:.*/)?(?:(?-i:(?!(?:" + _STANDARD_DOCS + r")\.md$)[A-Z]{3,15}\.md)|\.[\w-]*rules|copilot-instructions\.md"
     r"|\.[\w-]+/(?:rules|instructions)/[^/]+\.mdc?|\.[\w-]+/(?:agents|commands|skills|rules)/.+\.mdc?)$"
 )
 INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
-EXFIL = re.compile(r"(?i)(?:~/\.ssh|id_rsa|\.aws/credentials|\.npmrc|\.env\b|keychain|wallet|private key)[^\n]{0,80}(?:send|post|upload|curl|fetch|exfil|http)|(?:ignore|disregard)\s+(?:all\s+)?(?:previous|prior|above)\s+instructions|do not (?:tell|mention|inform) the user")
+# Directive-shaped text only: an action on a credential store followed by a transfer verb,
+# an instruction override, or concealment from the user. Mentioning ".env" in prose is not enough.
+EXFIL = re.compile(
+    r"(?i)\b(?:read|cat|open|copy|collect|include|send|upload)\b[^\n]{0,40}(?:~/\.ssh|id_rsa|id_ed25519|\.aws/credentials|\.npmrc|\.git-credentials|keychain|wallet|private key|seed phrase)"
+    r"[^\n]{0,80}\b(?:send|post|upload|curl|exfiltrat\w*|transmit|webhook|to https?://)"
+    r"|(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+instructions"
+    r"|(?:do not|don't|never)\s+(?:tell|mention|inform|reveal\s+(?:this\s+)?to)\s+the\s+user"
+)
 
 _LLM_OUT = r"(?:choices\[0\]\.message\.content|\.output_text|completion\.content|response\.content\[0\]\.text|\.text\(\)|result\.content|llm_output|model_output|ai_response|generated_code|completion\b)"
 _SINKS = r"(?:\beval\s*\(|\bexec\s*\(|new\s+Function\s*\(|\.innerHTML\s*=|dangerouslySetInnerHTML|\{@html|v-html|subprocess\.|os\.system\(|child_process|execSync\(|\.execute\(|\$queryRawUnsafe\()"
