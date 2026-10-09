@@ -1,0 +1,98 @@
+[
+ {
+  "name": "py-cmd-constant-callers",
+  "note": "shell=True helper only ever called with literals from a maintenance script",
+  "files": {
+   "tools/maint.py": "import subprocess\n\n\ndef run(cmd):\n    return subprocess.run(\"nice -n 10 \" + cmd, shell=True, check=True)\n\n\ndef main():\n    run(\"vacuumdb --all\")\n    run(\"reindexdb --all\")\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  },
+  "expect": {
+   "CODE-SHELL-TRUE@tools/maint.py:5": "fp"
+  }
+ },
+ {
+  "name": "py-cmd-reached-from-webhook",
+  "note": "same helper, but a webhook passes the branch name from the JSON body",
+  "files": {
+   "app/git_ops.py": "import subprocess\n\n\ndef checkout(branch):\n    subprocess.run(\"git checkout \" + branch, shell=True, check=True)\n",
+   "app/hooks.py": "from fastapi import FastAPI, Request\nfrom app.git_ops import checkout\n\napi = FastAPI()\n\n\n@api.post(\"/hook\")\nasync def hook(req: Request):\n    payload = await req.json()\n    checkout(payload[\"ref\"].split(\"/\")[-1])\n    return {\"ok\": True}\n"
+  },
+  "expect": {
+   "CODE-CMD-INJECTION@app/hooks.py:10": "tp",
+   "CODE-SHELL-TRUE@app/git_ops.py:5": "tp"
+  }
+ },
+ {
+  "name": "py-sql-format-search",
+  "note": "search term from the query string formatted into LIKE",
+  "files": {
+   "api/search.py": "from flask import Blueprint, request, jsonify\nfrom api.db import cursor\n\nbp = Blueprint(\"search\", __name__)\n\n\ndef find(term):\n    cur = cursor()\n    cur.execute(\"SELECT id, title FROM docs WHERE title LIKE '%%%s%%'\" % term)\n    return cur.fetchall()\n\n\n@bp.get(\"/search\")\ndef search():\n    return jsonify(find(request.args.get(\"q\", \"\")))\n",
+   "api/db.py": "def cursor():\n    raise NotImplementedError\n"
+  },
+  "expect": {
+   "CODE-SQL-INJECTION@api/search.py:15": "tp",
+   "CODE-SQL-INJECTION@api/search.py:9": "tp"
+  }
+ },
+ {
+  "name": "js-exec-query-param",
+  "note": "Express route interpolates a query parameter into exec",
+  "files": {
+   "server/routes.js": "const express = require(\"express\");\nconst { exec } = require(\"child_process\");\nconst router = express.Router();\n\nrouter.get(\"/log\", (req, res) => {\n  exec(`git log --oneline ${req.query.branch}`, (err, out) => res.send(out));\n});\n\nmodule.exports = router;\n"
+  },
+  "expect": {
+   "CODE-CMD-INJECTION@server/routes.js:6": "tp"
+  }
+ },
+ {
+  "name": "js-innerhtml-sanitised-elsewhere",
+  "note": "innerHTML receives a value passed through DOMPurify in a helper",
+  "files": {
+   "web/render.js": "import { clean } from \"./sanitize.js\";\n\nexport function showComment(el, comment) {\n  el.innerHTML = clean(comment.body);\n}\n",
+   "web/sanitize.js": "import DOMPurify from \"dompurify\";\n\nexport const clean = (html) => DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });\n"
+  },
+  "expect": {
+   "CODE-XSS-SINK@web/render.js:4": "fp"
+  }
+ },
+ {
+  "name": "js-innerhtml-raw-comment",
+  "note": "innerHTML receives a comment body from the API without sanitising",
+  "files": {
+   "web/comments.js": "export async function loadComments(list) {\n  const res = await fetch(\"/api/comments\");\n  const items = await res.json();\n  for (const c of items) {\n    const li = document.createElement(\"li\");\n    li.innerHTML = `<b>${c.author}</b> ${c.body}`;\n    list.appendChild(li);\n  }\n}\n"
+  },
+  "expect": {
+   "CODE-XSS-SINK@web/comments.js:6": "tp"
+  }
+ },
+ {
+  "name": "py-path-traversal",
+  "note": "user file name joined to the base directory without any check",
+  "files": {
+   "files/export.py": "import os\nfrom flask import Flask, request, send_file\n\napp = Flask(__name__)\n\n\n@app.route(\"/export\")\ndef export():\n    return send_file(os.path.join(\"/srv/exports\", request.args[\"file\"]))\n"
+  },
+  "expect": {
+   "CODE-PATH-TRAVERSAL@files/export.py:9": "tp"
+  }
+ },
+ {
+  "name": "py-sql-table-from-literals",
+  "note": "table name interpolated, but every caller passes a literal",
+  "files": {
+   "jobs/stats.py": "def count(cur, table):\n    cur.execute(f\"SELECT count(*) FROM {table}\")\n    return cur.fetchone()[0]\n\n\ndef nightly(cur):\n    return {name: count(cur, name) for name in (\"users\", \"orders\", \"invoices\")}\n"
+  },
+  "expect": {
+   "CODE-SQL-INJECTION@jobs/stats.py:2": "fp"
+  }
+ },
+ {
+  "name": "py-ssrf-allowlisted-host",
+  "note": "URL from the request, but the host is checked against an allow-list in a helper",
+  "files": {
+   "proxy/views.py": "import requests\nfrom urllib.parse import urlparse\nfrom flask import Flask, request, abort\n\napp = Flask(__name__)\nALLOWED = {\"api.github.com\", \"api.stripe.com\"}\n\n\ndef check(url):\n    if urlparse(url).hostname not in ALLOWED:\n        abort(400)\n    return url\n\n\n@app.route(\"/fetch\")\ndef fetch():\n    url = request.args[\"url\"]\n    check(url)\n    return requests.get(url, timeout=5).text\n"
+  },
+  "expect": {
+   "CODE-SSRF@proxy/views.py:19": "fp",
+   "CODE-XSS-SINK@proxy/views.py:19": "fp"
+  }
+ }
+]

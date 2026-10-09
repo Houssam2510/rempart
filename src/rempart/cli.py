@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 from datetime import datetime
@@ -179,8 +180,29 @@ def cmd_k8s(args: argparse.Namespace) -> int:
     return _render(findings, f"k8s:{args.context or 'current-context'}", args, scanners=("kubernetes",))
 
 
+def cmd_agent_eval(args: argparse.Namespace) -> int:
+    from rempart.agent_eval import load_cases, render, run_case, score
+
+    cases = load_cases(Path(args.corpus) if args.corpus else None)
+    if args.case:
+        cases = [c for c in cases if c["name"] in set(args.case)]
+    results = []
+    for case in cases:
+        print(f"· {case['name']}", file=sys.stderr)
+        try:
+            results.append(run_case(case, model=args.model, effort=args.effort))
+        except RuntimeError as exc:
+            print(f"rempart: {exc}", file=sys.stderr)
+            return 2
+    summary = score(results)
+    print(render(results, summary))
+    if args.json:
+        Path(args.json).write_text(json.dumps({"summary": summary, "cases": [r.__dict__ for r in results]}, indent=2), encoding="utf-8")
+    return 0
+
+
 def cmd_agent(args: argparse.Namespace) -> int:
-    from rempart.agent import VerificationAgent, apply_fixes, apply_report, render_report_md, select_targets
+    from rempart.agent import VerificationAgent, apply_fixes, apply_report, render_report_md, select_targets, write_proofs
     from rempart.engine import discover
     from rempart.history import History
     from rempart.reporters import render_console
@@ -223,7 +245,9 @@ def cmd_agent(args: argparse.Namespace) -> int:
           f"{sum(v.verdict == 'false_positive' for v in report.verdicts.values())} false positives, "
           f"{sum(v.verdict == 'uncertain' for v in report.verdicts.values())} uncertain · {report.turns} turns"
           + (f" · ≈ ${cost}" if cost is not None else "") + f" · stop: {report.stop}")
-    print(f"Report: {args.report}" + (f" · fixes: {args.patch} ({len(report.fixes)})" if report.fixes else ""))
+    proofs = write_proofs(report, result.findings, Path(args.proofs))
+    print(f"Report: {args.report}" + (f" · fixes: {args.patch} ({len(report.fixes)})" if report.fixes else "")
+          + (f" · proof tests: {args.proofs}/ ({len(proofs)}, not executed)" if proofs else ""))
     if report.summary:
         print("\n" + report.summary)
     if args.apply and report.fixes:
@@ -396,11 +420,20 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--max-turns", type=int, default=40)
     ag.add_argument("--min-severity", default="medium", choices=[x.name.lower() for x in Severity])
     ag.add_argument("--offline", action="store_true")
+    ag.add_argument("--proofs", default="rempart-proofs", metavar="DIR", help="where confirmed findings' proof tests are written (never executed)")
     ag.add_argument("--report", default="rempart-agent-report.md")
     ag.add_argument("--patch", default="rempart-fixes.patch")
     ag.add_argument("--apply", action="store_true", help="write the proposed fixes to the files (review with git diff)")
     ag.add_argument("--limit", type=int, default=40)
     ag.set_defaults(func=cmd_agent)
+
+    ev = sub.add_parser("agent-eval", help="measure the AI verification agent on labelled cases (needs ANTHROPIC_API_KEY)")
+    ev.add_argument("--corpus", help="JSON file of labelled cases (default: the bundled corpus)")
+    ev.add_argument("--case", action="append", help="run only this case (repeatable)")
+    ev.add_argument("--model", default=None)
+    ev.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
+    ev.add_argument("--json", help="also write the detailed results to this file")
+    ev.set_defaults(func=cmd_agent_eval)
 
     sub.add_parser("mcp", help="run as a Model Context Protocol server over stdio (for AI coding assistants: Cursor, VS Code, Windsurf…)").set_defaults(func=cmd_mcp)
 

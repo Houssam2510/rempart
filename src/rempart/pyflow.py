@@ -126,6 +126,7 @@ SANITIZERS: dict[str, frozenset[str]] = {
 # Functions whose result carries no user data (numbers, hashes, lengths, booleans).
 NEUTRALIZERS = {"render_template", "flask.render_template", "int", "float", "bool", "len", "abs", "round", "hash", "id", "isinstance", "callable", "ord", "uuid.uuid4", "secrets.token_hex",
                 "secrets.token_urlsafe", "secrets.randbelow", "secrets.choice", "secrets.token_bytes", "time.time", "datetime.now", "datetime.datetime.now"}
+NON_HTML_RESPONSES = {"send_file", "send_from_directory", "jsonify", "abort", "FileResponse", "JSONResponse", "StreamingResponse"}
 PROPAGATE_METHODS = {"encode", "decode", "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize", "casefold", "swapcase", "replace", "format",
                      "join", "split", "rsplit", "splitlines", "partition", "rpartition", "removeprefix", "removesuffix", "zfill", "center", "ljust", "rjust",
                      "expandtabs", "translate", "read", "readline", "readlines", "getvalue", "copy", "values", "items", "keys", "__str__"}
@@ -487,7 +488,9 @@ class FunctionFlow:
             cats = SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())
             base = join(*(taint_of(a) for a in args)) if args else CLEAN
             return replace(base, clean=base.clean | cats, const=_NOCONST if not base.has_const() else base.const)
-        if name in NEUTRALIZERS or short in ("isdigit", "isalnum", "isnumeric", "startswith", "endswith", "count", "find", "index"):
+        if short in NON_HTML_RESPONSES:
+            return CLEAN  # a file, JSON or error response: the value is not written into HTML
+        if name in NEUTRALIZERS or (isinstance(node.func, ast.Attribute) and short in ("isdigit", "isalnum", "isnumeric", "startswith", "endswith", "count", "find", "index")):
             return CLEAN
         if "SystemRandom" in name:
             return CLEAN  # os.urandom-backed: cryptographically secure
@@ -748,6 +751,8 @@ class FunctionFlow:
                 self._assign(s.target, self.ev(s.value), s)
         elif isinstance(s, ast.Expr):
             self.ev(s.value)
+            if isinstance(s.value, ast.Call) and dotted(s.value.func).rsplit(".", 1)[-1] in ("abort", "exit", "_exit"):
+                self._terminated = True  # flask.abort / sys.exit never return
         elif isinstance(s, ast.Return):
             v = self.ev(s.value) if s.value is not None else const(None)
             self.returns.append(v)
@@ -756,6 +761,7 @@ class FunctionFlow:
             self._terminated = True
         elif isinstance(s, ast.Raise):
             self._terminated = True
+
         elif isinstance(s, ast.If):
             test = self.fold(s.test)
             if test is not _NOCONST:
@@ -870,7 +876,7 @@ class FunctionFlow:
             return None
         return None
 
-    _GUARD_SHAPE = re.compile(r"\bin\b|startswith|endswith|isdigit|isalnum|isnumeric|isidentifier|isascii|fullmatch|\.match\(|netloc|scheme|hostname|\bnot\b")
+    _GUARD_SHAPE = re.compile(r"\bin\b|commonpath|is_relative_to|startswith|endswith|isdigit|isalnum|isnumeric|isidentifier|isascii|fullmatch|\.match\(|netloc|scheme|hostname|\bnot\b")
 
     def _guard(self, test: ast.expr) -> None:
         """`if <check on x>: return` sanitises x (and what x was derived from) for what follows."""
