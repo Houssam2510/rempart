@@ -1,37 +1,31 @@
 # Roadmap
 
-The goal is breadth first, then depth where real scans show it is needed. Each item lists the signal that will justify it.
+Each item lists the signal that justifies it. Shipped items move to the changelog.
 
-## 0.2: depth where it pays
+## Shipped in 0.2
 
-- **Intra-file taint tracking for JS/TS** (source to variable to sink within a function) using a lightweight tokenizer, to catch values laundered through one or two assignments. Signal: misses found while triaging.
-- **Git history secrets** (`rempart scan --history`): scan `git log -p` for secrets that were deleted but remain reachable.
-- **Baseline mode** (`--baseline main`): report only findings introduced by a branch, for PR gating on legacy repos.
-- **Helm and Kustomize**: render, then scan.
-- **CloudFormation / CDK synth output** through the same IaC rule set.
+Attack-path correlation, intra-procedural data flow (Python, JS/TS), dependency reachability, live secret verification, container image scanning without Docker, live AWS and Kubernetes audits, the AI verification agent, and the MCP server.
 
-## 0.3: data and AI depth
+## Next: depth
 
-- Notebook scanning (outputs containing data, credentials in cells).
-- Vector database queries without tenant filters (OWASP LLM08).
-- GraphQL: introspection, depth and complexity limits.
-- dbt / Airflow / Spark configs: credentials, public buckets in data pipelines.
+- **Resource-level attack graph.** Link findings by resource (this security group protects that instance, which runs this image built from this repo) instead of repository co-occurrence. Signal: chains whose links concern different resources.
+- **Inter-procedural data flow.** Summaries per function (parameter → sink) so taint crosses function boundaries in Python first, then JS/TS.
+- **Git history secrets** (`rempart scan --history`).
+- **Baseline mode** (`--baseline main`) for PR gating on legacy repositories.
+- **Images:** RPM (rpmdb.sqlite), Go build info, Java JARs.
 
-## 0.4: closing the loop with the other two tools
+## Next: breadth
 
-- Import [cspm-lite](https://github.com/Houssam2510/cspm-lite) results so code-level and live-account findings share one score.
-- Use the [triage](https://github.com/Houssam2510/triage) KEV/EPSS cache as a shared threat-intel store.
-- Package-release cooldown policy: flag dependencies published less than N days ago, the main defence against worms shipping with valid provenance.
+- Live GCP and Azure audits with the same `observed` model as AWS.
+- Kubernetes admission-policy inventory (K04), NetworkPolicy coverage (K05).
+- GraphQL depth/complexity limits, vector-store tenant filters (LLM08), notebooks with data in outputs.
 
-## Learning loop
+## Agent
 
-- Per-project rule calibration on top of the global one, once a project has enough verdicts.
-- Export and import anonymised rule statistics, so a team shares calibration without sharing code.
-- Precision dashboard in the HTML report (rules ranked by learned precision and volume).
+- Agent-assisted chain confirmation: give the agent each `CHAIN-*` finding and ask it to prove or break the link at resource level.
+- Batch mode through the Message Batches API for nightly runs at half price.
+- Evaluation set: a labelled corpus of true and false positives to measure agent precision per rule and catch regressions when the model or prompt changes.
 
 ## Distribution
 
-- Publish to PyPI as `rempart`.
-- Pre-commit hook.
-- VS Code task / problem matcher using the JSON output.
-- Docker image (distroless, non-root, digest-pinned).
+- PyPI release, pre-commit hook, Docker image (distroless, non-root, digest-pinned), VS Code problem matcher.

@@ -36,6 +36,9 @@ class Severity(enum.IntEnum):
 
 # Domains group rules in reports and drive the per-domain score.
 DOMAINS = (
+    "attack-path",
+    "cloud",
+    "image",
     "secrets",
     "code",
     "dependencies",
@@ -86,6 +89,11 @@ class Finding:
     severity: Severity | None = None
     confidence: float | None = None
     learned_note: str = ""
+    # How the finding was established. Static pattern match is the weakest evidence;
+    # the others are stronger and the reporters say so explicitly.
+    #   static | reachable | not-imported | observed | live-secret | revoked-secret
+    #   correlated | ai-confirmed | ai-rejected | ai-uncertain
+    verification: str = "static"
 
     def __post_init__(self) -> None:
         if self.severity is None:
@@ -131,5 +139,6 @@ class Finding:
             "remediation": self.rule.remediation,
             "references": list(self.rule.references),
             "learned_note": self.learned_note,
+            "verification": self.verification,
             "extra": {k: v for k, v in self.extra.items() if k != "anchor"},
         }

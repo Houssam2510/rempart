@@ -25,7 +25,7 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
     counts = result.counts()
     out = [
         col(f"Rempart — {result.root}", BOLD),
-        f"{result.files_scanned} files · {len(result.scanners)} scanners · {result.duration_s}s"
+        (f"{result.files_scanned} files · " if result.files_scanned else "") + f"{len(result.scanners)} scanner(s) · {result.duration_s}s"
         + (f" · {result.suppressed} suppressed" if result.suppressed else ""),
         "",
         col(f"  Posture score {value}/100  grade {grade}", BOLD),

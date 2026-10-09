@@ -103,3 +103,22 @@ class HistoryDiffTest(unittest.TestCase):
         self.assertEqual(diff["fixed"], [])
         self.assertIsNone(hist.mttr_days(project))
         hist.close()
+
+
+class AIVerdictPolicyTest(unittest.TestCase):
+    def test_ai_verdicts_never_close_or_override_human(self):
+        home = tempfile.mkdtemp()
+        res = scan_tree({"a.js": "eval(x);\neval(y);\n"}, ["code"])
+        hist = History(Path(home) / "h.db")
+        project = res.root
+        hist.record(project, res)
+        a, b = res.findings[0].fingerprint, res.findings[1].fingerprint
+        hist.triage(project, a, "fp", source="ai")
+        kept, suppressed = hist.apply_knowledge(project, list(res.findings))
+        self.assertEqual(suppressed, 0)  # AI cannot close
+        self.assertAlmostEqual(hist.rule_stats()["CODE-EVAL"].fp, 0.5)  # and counts half
+        hist.triage(project, b, "tp")  # human
+        hist.triage(project, b, "fp", source="ai")  # ignored: human verdict stands
+        verdict = hist.db.execute("SELECT verdict, source FROM verdicts WHERE fingerprint = ?", (b,)).fetchone()
+        self.assertEqual(verdict, ("tp", "human"))
+        hist.close()

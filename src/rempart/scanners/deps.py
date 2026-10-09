@@ -138,6 +138,8 @@ def fixed_versions(v: dict[str, Any], pkg: Package) -> list[str]:
         p = aff.get("package") or {}
         if str(p.get("name", "")).lower() != pkg.name.lower():
             continue
+        if p.get("ecosystem") and str(p["ecosystem"]) != pkg.ecosystem:
+            continue  # a fix for Debian 12 says nothing about the Debian 13 package
         for rng in aff.get("ranges") or []:
             for ev in rng.get("events") or []:
                 if "fixed" in ev and ev["fixed"] not in out:
@@ -159,9 +161,32 @@ class DependencyScanner:
             yield Finding(R_OSV_DOWN, packages[0].path, 0, f"{len(packages)} packages not checked (offline mode).", extra={"anchor": "offline"})
             return
         try:
-            yield from self.vulnerabilities(packages)
+            yield from self.with_reachability(ctx, self.vulnerabilities(packages))
         except NetworkError as exc:
             yield Finding(R_OSV_DOWN, packages[0].path, 0, f"OSV.dev unreachable: {exc}", extra={"anchor": "network"})
+
+    @staticmethod
+    def with_reachability(ctx: ScanContext, findings: Iterator[Finding]) -> Iterator[Finding]:
+        from rempart.reachability import classify, direct_dependencies, imported_names
+
+        imported = imported_names(ctx.files, ctx.text)
+        direct = direct_dependencies(ctx.files, ctx.text)
+        for f in findings:
+            eco, name = f.extra.get("ecosystem"), f.extra.get("package")
+            if eco and name and f.rule is R_VULN:
+                is_direct, is_imported = classify(str(eco), str(name), imported, direct)
+                if is_imported is not None:
+                    f.extra["direct"], f.extra["imported"] = is_direct, is_imported
+                    if is_imported:
+                        f.verification = "reachable"
+                        f.message += " — imported by your code"
+                    elif is_direct:
+                        f.verification = "declared"
+                    else:
+                        f.verification = "not-imported"
+                        f.confidence = round((f.confidence or 0.9) * 0.6, 2)
+                        f.message += " — transitive, not imported directly"
+            yield f
 
     @staticmethod
     def collect(ctx: ScanContext) -> list[Package]:
@@ -194,15 +219,17 @@ class DependencyScanner:
         ids = sorted({vid for _, vid in hits})
         with ThreadPoolExecutor(max_workers=8) as pool:
             details = dict(zip(ids, pool.map(lambda i: _try(lambda: safe_get_json(OSV_VULN.format(i), ttl=3 * 86400)), ids)))
-        cves = sorted({a for d in details.values() if d for a in (d.get("aliases") or []) + [d.get("id", "")] if str(a).startswith("CVE-")})
+        cves = sorted({c for d in details.values() if d for a in (d.get("aliases") or []) + (d.get("upstream") or []) + [d.get("id", "")]
+                       for c in re.findall(r"CVE-\d{4}-\d{4,}", str(a))})
         kev = _load_kev()
         epss = _load_epss(cves)
         # Collapse advisories that are aliases of each other (GHSA + PYSEC for one CVE).
         emitted: set[tuple[str, str, str]] = set()
         for pkg, vid in hits:
             d = details.get(vid) or {"id": vid}
-            aliases = [a for a in (d.get("aliases") or []) if a]
+            aliases = [a for a in (d.get("aliases") or []) + (d.get("upstream") or []) if a]
             cve_ids = [a for a in aliases + [vid] if a.startswith("CVE-")]
+            cve_ids += [c for c in re.findall(r"CVE-\d{4}-\d{4,}", vid) if c not in cve_ids]  # DEBIAN-CVE-…, UBUNTU-CVE-…
             key = (pkg.name, pkg.version, cve_ids[0] if cve_ids else vid)
             if key in emitted:
                 continue
@@ -232,7 +259,7 @@ class DependencyScanner:
             f = Finding(R_VULN, pkg.path, pkg.line, " — ".join(parts), snippet=f"{pkg.name}@{pkg.version}",
                         extra={"anchor": f"{pkg.ecosystem}:{pkg.name}:{pkg.version}:{key[2]}", "package": pkg.name, "version": pkg.version,
                                "ecosystem": pkg.ecosystem, "advisory": vid, "aliases": aliases, "fixed": fixes, "cvss": cvss,
-                               "epss": round(e, 4), "kev": in_kev})
+                               "epss": round(e, 4), "kev": in_kev, "published": str(d.get("published", ""))[:10]})
             f.severity = sev
             yield f
 

@@ -29,10 +29,41 @@ History.apply_knowledge()   drop fingerprints marked FP/accepted, recalibrate co
 reporters             console · JSON · SARIF 2.1.0 · Markdown · HTML
 ```
 
+## Beyond the repository
+
+```
+rempart image REF|tar   images.py      registry v2 client (token auth) → layers streamed → whiteout-aware ImageFS
+                                        → os-release, dpkg/status(.d), apk db, dist-info, node_modules, lockfiles
+                                        → DependencyScanner.vulnerabilities() (OSV + KEV + EPSS) + EOL + config + secrets
+rempart cloud aws       cloud_aws.py   AWSAudit(session): global IAM/S3/CloudTrail, then regions in parallel;
+                                        every API error becomes an AWS-CHECK-SKIPPED finding, never a crash
+rempart k8s             kube_live.py   kubectl get … -o json → KubernetesScanner.document() on live objects
+rempart scan --aws/--image             merges those findings before correlation
+```
+
+## Intelligence layers
+
+| Layer | Module | Effect on a finding |
+|---|---|---|
+| Data flow | `scanners/code.py` (`PythonAnalyzer` scopes, `js_tracked_names`) | more true positives through variables; `extra.dataflow` names the variable and source line |
+| Reachability | `reachability.py` | `verification` = reachable / declared / not-imported; confidence ×0.6 when not imported |
+| Live verification | `verify.py` | `live-secret` → CRITICAL, confidence 1.0; `revoked-secret` → LOW |
+| Correlation | `correlate.py` | adds `CHAIN-*` findings (domain `attack-path`), built after triage so suppressed noise cannot form chains |
+| AI review | `agent.py` | `ai-confirmed` / `ai-rejected` / `ai-uncertain`, reasoning and evidence in `extra`, proposed patches |
+| Learning | `history.py` | per-rule Beta posterior; AI verdicts weigh 0.5 and cannot close findings |
+
+## Agent loop (`agent.py`)
+
+Manual tool-use loop on the Anthropic Messages API (`client.beta.messages.create`): the newest Opus-tier model from the Models API unless `REMPART_MODEL` is set (adaptive thinking, effort `high`), strict tool schemas, automatic prompt caching, server-side refusal fallback (`fallbacks="default"`). History is append-only. Every `tool_use` gets a `tool_result` in the next user message, and errors come back as `is_error` results. Stops on `finish` once every target has a verdict, on refusal, or at the turn budget. The `Workspace` class is the agent's only access to the repository: read and search on files the scan discovered, nothing else.
+
+## MCP server (`mcp_server.py`)
+
+JSON-RPC 2.0 over stdio, newline-delimited. It implements `initialize` (protocol version negotiation), `ping`, `tools/list` and `tools/call`. Tool failures are returned as `isError: true` results, not protocol errors, so the calling model can read and recover.
+
 ## Core types (`models.py`)
 
 - **Rule**: static knowledge. It holds the id, title, default severity, domain, CWE, OWASP 2025 category, other frameworks, remediation and a prior confidence.
-- **Finding**: one occurrence. It holds the rule, path, line, message, snippet, `extra` (EPSS, KEV, package…), a severity and confidence that can be adjusted, and the learned note.
+- **Finding**: one occurrence. It holds the rule, path, line, message, snippet, `extra` (EPSS, KEV, package, data flow, AI reasoning…), a severity and confidence that can be adjusted, the learned note, and a **verification** level stating how the finding was established.
 - **Fingerprint** = `sha256(rule_id | path | anchor)`, where the anchor is the normalised snippet (or a scanner-provided key). Line numbers are excluded on purpose, so triage verdicts survive unrelated edits.
 
 ## Scanners

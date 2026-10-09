@@ -294,3 +294,24 @@ class CICDRobustnessTest(unittest.TestCase):
     def test_invalid_yaml_still_gets_line_checks(self):
         res = scan_tree({".github/workflows/x.yml": 'on: issues\njobs:\n  a:\n    steps:\n      - uses: some/action@v1\n      - run: echo "t: ${{ github.event.issue.title }}"\n'}, ["cicd"])
         self.assertTrue({"GHA-UNPINNED-ACTION", "GHA-SCRIPT-INJECTION"} <= rule_ids(res), rule_ids(res))
+
+
+class KubeLiveTest(unittest.TestCase):
+    def test_live_objects_use_manifest_rules(self):
+        from rempart.kube_live import audit
+        items = {"items": [
+            {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "api", "namespace": "prod"},
+             "spec": {"template": {"spec": {"containers": [{"name": "api", "image": "org/api:latest", "securityContext": {"privileged": True}}]}}}},
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "api-123", "namespace": "prod", "ownerReferences": [{"kind": "ReplicaSet"}]},
+             "spec": {"containers": [{"name": "api", "image": "org/api:latest"}]}},
+            {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "coredns", "namespace": "kube-system"}, "spec": {"containers": [{"name": "c", "image": "x"}]}},
+            {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding", "metadata": {"name": "ci-admin"},
+             "roleRef": {"name": "cluster-admin"}, "subjects": [{"kind": "ServiceAccount", "name": "ci"}]},
+        ]}
+        findings = audit(items, context="prod-cluster")
+        paths = {f.path for f in findings}
+        self.assertIn("k8s://prod-cluster/prod/Deployment/api", paths)
+        self.assertFalse(any("api-123" in p or "coredns" in p for p in paths))
+        ids = {f.rule.id for f in findings}
+        self.assertTrue({"K8S-PRIVILEGED", "K8S-CLUSTER-ADMIN-BINDING"} <= ids)
+        self.assertTrue(all(f.verification == "observed" for f in findings))

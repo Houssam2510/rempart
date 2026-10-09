@@ -92,3 +92,23 @@ class QualityPrecisionTest(unittest.TestCase):
     def test_sync_io_in_test_files_ignored(self):
         res = scan_tree({"src/lib/server/x.test.ts": "const f = readFileSync('fixture.json');\n"}, ["quality"])
         self.assertNotIn("PERF-SYNC-IO-IN-SERVER", rule_ids(res))
+
+
+class NPlusOnePrecisionTest(unittest.TestCase):
+    def test_dict_get_in_loop_is_not_a_query(self):
+        src = "def f(findings, report, db):\n    for x in findings:\n        v = report.verdicts.get(x)\n        y = db.get('Name')\n"
+        self.assertNotIn("PERF-N-PLUS-ONE", rule_ids(scan_tree({"a.py": src}, ["quality"])))
+        src2 = "def g(ids, session):\n    for i in ids:\n        u = User.objects.get(id=i)\n"
+        self.assertIn("PERF-N-PLUS-ONE", rule_ids(scan_tree({"b.py": src2}, ["quality"])))
+
+
+class AgentFileShapeTest(unittest.TestCase):
+    def test_instruction_and_mcp_files_matched_by_shape(self):
+        from rempart.scanners.ai import AGENT_RULE_FILES, MCP_FILES
+        for path in ("AGENTS.md", "pkg/AGENTS.md", "ASSISTANT.md", ".cursorrules", ".windsurf/rules/x.md", ".acme/agents/review.md", ".github/copilot-instructions.md"):
+            self.assertTrue(AGENT_RULE_FILES.search(path), path)
+        for path in ("README.md", "docs/RULES.md", "CHANGELOG.md", "notes.md", "src/Readme.md"):
+            self.assertFalse(AGENT_RULE_FILES.search(path), path)
+        for path in (".mcp.json", ".cursor/mcp.json", "acme_desktop_config.json", ".gemini/settings.json"):
+            self.assertTrue(MCP_FILES.search(path), path)
+        self.assertFalse(MCP_FILES.search("package.json"))

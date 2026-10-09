@@ -40,18 +40,23 @@ CREATE INDEX IF NOT EXISTS findings_scan ON findings(scan_id);
 CREATE TABLE IF NOT EXISTS verdicts (
     project TEXT NOT NULL, fingerprint TEXT NOT NULL, rule_id TEXT NOT NULL,
     verdict TEXT NOT NULL CHECK (verdict IN ('tp', 'fp', 'accepted')),
-    note TEXT, ts REAL NOT NULL,
+    note TEXT, ts REAL NOT NULL, source TEXT NOT NULL DEFAULT 'human',
     PRIMARY KEY (project, fingerprint)
 );
 """
 
 
+# An AI verdict is evidence, not a decision: it counts half in calibration and
+# can never close a finding. Only a human verdict suppresses future findings.
+AI_WEIGHT = 0.5
+
+
 @dataclass
 class RuleStats:
     rule_id: str
-    tp: int
-    fp: int
-    accepted: int
+    tp: float
+    fp: float
+    accepted: float
 
     def precision(self, prior: float = 0.8, strength: float = 4.0) -> float:
         a, b = prior * strength, (1 - prior) * strength
@@ -61,8 +66,12 @@ class RuleStats:
 class History:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (home() / "rempart.db")
-        self.db = sqlite3.connect(self.path)
+        self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.executescript(SCHEMA)
+        cols = {row[1] for row in self.db.execute("PRAGMA table_info(verdicts)")}
+        if "source" not in cols:  # databases created by 0.1
+            self.db.execute("ALTER TABLE verdicts ADD COLUMN source TEXT NOT NULL DEFAULT 'human'")
+            self.db.commit()
 
     def close(self) -> None:
         self.db.close()
@@ -70,7 +79,12 @@ class History:
     # ------------------------------------------------------------ learning
     def rule_stats(self) -> dict[str, RuleStats]:
         rows = self.db.execute(
-            "SELECT rule_id, SUM(verdict='tp'), SUM(verdict='fp'), SUM(verdict='accepted') FROM verdicts GROUP BY rule_id"
+            "SELECT rule_id,"
+            " SUM((verdict='tp') * (CASE source WHEN 'ai' THEN ? ELSE 1.0 END)),"
+            " SUM((verdict='fp') * (CASE source WHEN 'ai' THEN ? ELSE 1.0 END)),"
+            " SUM((verdict='accepted') * (CASE source WHEN 'ai' THEN ? ELSE 1.0 END))"
+            " FROM verdicts GROUP BY rule_id",
+            (AI_WEIGHT, AI_WEIGHT, AI_WEIGHT),
         ).fetchall()
         return {r[0]: RuleStats(r[0], r[1] or 0, r[2] or 0, r[3] or 0) for r in rows}
 
@@ -94,7 +108,7 @@ class History:
         kept.sort(key=lambda f: (-f.risk, f.path, f.line))
         return kept, len(findings) - len(kept)
 
-    def triage(self, project: str, fingerprint: str, verdict: str, note: str = "") -> str:
+    def triage(self, project: str, fingerprint: str, verdict: str, note: str = "", source: str = "human") -> str:
         row = self.db.execute(
             "SELECT f.rule_id FROM findings f JOIN scans s ON s.id = f.scan_id WHERE s.project = ? AND f.fingerprint = ? ORDER BY s.id DESC LIMIT 1",
             (project, fingerprint),
@@ -104,10 +118,12 @@ class History:
         if row is None:
             raise KeyError(f"unknown fingerprint {fingerprint} for {project}; run a scan first")
         full = self.db.execute("SELECT fingerprint FROM findings WHERE fingerprint LIKE ? LIMIT 1", (fingerprint + "%",)).fetchone()[0]
+        # a human verdict always wins; an AI verdict never overwrites a human one
         self.db.execute(
-            "INSERT INTO verdicts(project, fingerprint, rule_id, verdict, note, ts) VALUES (?,?,?,?,?,?) "
-            "ON CONFLICT(project, fingerprint) DO UPDATE SET verdict=excluded.verdict, note=excluded.note, ts=excluded.ts",
-            (project, full, row[0], verdict, note, time.time()),
+            "INSERT INTO verdicts(project, fingerprint, rule_id, verdict, note, ts, source) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(project, fingerprint) DO UPDATE SET verdict=excluded.verdict, note=excluded.note, ts=excluded.ts, source=excluded.source "
+            "WHERE excluded.source = 'human' OR verdicts.source = 'ai'",
+            (project, full, row[0], verdict, note, time.time(), source),
         )
         self.db.commit()
         return row[0]
@@ -141,7 +157,7 @@ class History:
 
     def _closed(self, project: str) -> set[str]:
         return {fp for (fp,) in self.db.execute(
-            "SELECT fingerprint FROM verdicts WHERE project = ? AND verdict IN ('fp', 'accepted')", (project,))}
+            "SELECT fingerprint FROM verdicts WHERE project = ? AND verdict IN ('fp', 'accepted') AND source = 'human'", (project,))}
 
     def scans(self, project: str, limit: int = 20) -> list[dict[str, object]]:
         rows = self.db.execute(

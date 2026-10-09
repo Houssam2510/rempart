@@ -98,3 +98,21 @@ class HygieneTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReachabilityTest(unittest.TestCase):
+    def test_classify_imports_and_direct(self):
+        from rempart.reachability import classify, direct_dependencies, imported_names
+        files = {
+            "package.json": json.dumps({"dependencies": {"lodash": "^4", "@scope/ui": "1"}}),
+            "src/a.ts": "import _ from 'lodash';\nimport x from '@scope/ui/button';\n",
+            "requirements.txt": "PyYAML==6.0\nrequests==2.31.0\n",
+            "app.py": "import yaml\nfrom requests.adapters import HTTPAdapter\n",
+        }
+        imp = imported_names(files, files.get)
+        dire = direct_dependencies(files, files.get)
+        self.assertEqual(classify("npm", "lodash", imp, dire), (True, True))
+        self.assertEqual(classify("npm", "@scope/ui", imp, dire), (True, True))
+        self.assertEqual(classify("npm", "minimist", imp, dire), (False, False))
+        self.assertEqual(classify("PyPI", "PyYAML", imp, dire), (True, True))
+        self.assertEqual(classify("PyPI", "urllib3", imp, dire), (False, False))

@@ -4,13 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rempart"
-version = "0.1.0"
-description = "Security, data and cloud posture scanner for your own code: SAST, secrets, dependencies (OSV + CISA KEV + EPSS), IaC, Kubernetes, CI/CD, data stores, AI agents, quality and performance."
+version = "0.2.0"
+description = "Security, data and cloud posture scanner with an AI verification agent: code, secrets, dependencies (OSV + KEV + EPSS), container images, live AWS and Kubernetes, IaC, CI/CD, data stores and AI agents, correlated into attack paths."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Houssam Nadir" }]
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+aws = ["boto3>=1.34"]
+ai = ["anthropic>=1.12"]
+all = ["boto3>=1.34", "anthropic>=1.12"]
 keywords = ["security", "sast", "sca", "iac", "kubernetes", "devsecops", "owasp", "cloud-security", "data-security", "mcp"]
 classifiers = [
   "Programming Language :: Python :: 3",

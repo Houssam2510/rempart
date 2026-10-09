@@ -1,6 +1,6 @@
 # Rules
 
-Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35, containers 12, data 18, dependencies 3, iac 31, kubernetes 17, performance 12, quality 10, secrets 32, supply-chain 6, web 14.
+Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, cicd 16, cloud 30, code 36, containers 12, data 19, dependencies 3, iac 31, image 11, kubernetes 17, performance 12, quality 10, secrets 32, supply-chain 6, web 14.
 
 | Rule | Severity | Domain | Title | CWE | OWASP 2025 | Other frameworks |
 |---|---|---|---|---|---|---|
@@ -14,6 +14,15 @@ Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35,
 | `AI-OUTPUT-TO-SINK` | HIGH | ai | Model output flows into a code, shell, HTML or SQL sink | CWE-94, CWE-79, CWE-89 | A05:2025 | LLM05:2025 Improper Output Handling, ASI05:2026 Unexpected Code Execution |
 | `AI-PROMPT-INJECTION-SURFACE` | MEDIUM | ai | Untrusted input concatenated into the system prompt | CWE-77 | A05:2025 | LLM01:2025 Prompt Injection, ASI01:2026 Agent Goal Hijack |
 | `AI-SECRET-IN-PROMPT` | HIGH | ai | Secret or credential placed in a prompt | CWE-200, CWE-532 | A07:2025 | LLM02:2025 Sensitive Information Disclosure, LLM07:2025 System Prompt Leakage |
+| `CHAIN-ADMIN-CREDENTIALS-EXPOSED` | CRITICAL | attack-path | Credentials with full cloud admin can leak |  | A01:2025, A07:2025 |  |
+| `CHAIN-BAAS-TABLE-PUBLIC` | CRITICAL | attack-path | Database table readable and writable by any visitor |  | A01:2025 |  |
+| `CHAIN-CI-UNTRUSTED-TO-RELEASE` | CRITICAL | attack-path | Untrusted pull-request input can reach release credentials |  | A08:2025, A03:2025 |  |
+| `CHAIN-DEBUG-CONSOLE-EXPOSED` | CRITICAL | attack-path | Debug server reachable from the network |  | A02:2025 |  |
+| `CHAIN-EXPOSED-DATASTORE` | CRITICAL | attack-path | Internet-reachable data store with weak protection |  | A02:2025, A07:2025 |  |
+| `CHAIN-RCE-TO-HOST` | CRITICAL | attack-path | Code execution would escape the container to the host |  | A05:2025, A02:2025 |  |
+| `CHAIN-SSRF-TO-CLOUD-CREDENTIALS` | CRITICAL | attack-path | SSRF can reach instance metadata credentials |  | A01:2025 |  |
+| `CHAIN-WORM-PROPAGATION` | CRITICAL | attack-path | Install-time code could republish your packages |  | A03:2025, A08:2025 |  |
+| `CHAIN-XSS-SESSION-THEFT` | HIGH | attack-path | One XSS steals every user session |  | A05:2025, A07:2025 |  |
 | `CI-CURL-PIPE-SHELL` | MEDIUM | cicd | Pipeline downloads and executes a remote script | CWE-494 | A08:2025 | CICD-SEC-3 Dependency Chain Abuse |
 | `CI-LONG-LIVED-PUBLISH-TOKEN` | MEDIUM | cicd | Package published with a long-lived token | CWE-798 | A07:2025 | CICD-SEC-6 Insufficient Credential Hygiene |
 | `GHA-CACHE-IN-PRIVILEGED` | HIGH | cicd | Cache used in a privileged pull_request_target / release workflow | CWE-349 | A08:2025 | CICD-SEC-4 Poisoned Pipeline Execution, CICD-SEC-9 Improper Artifact Integrity Validation |
@@ -30,6 +39,36 @@ Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35,
 | `GHA-WORKFLOW-RUN-ARTIFACT` | MEDIUM | cicd | workflow_run consumes artifacts from an untrusted run | CWE-345 | A08:2025 | CICD-SEC-9 Improper Artifact Integrity Validation |
 | `GHA-WRITE-ALL` | HIGH | cicd | Workflow grants write-all permissions | CWE-250 | A01:2025 | CICD-SEC-2 Inadequate IAM, CICD-SEC-5 Insufficient PBAC |
 | `GITLAB-CI-DEBUG-TRACE` | HIGH | cicd | CI debug trace enabled | CWE-532 | A07:2025 | CICD-SEC-6 Insufficient Credential Hygiene |
+| `AWS-ACCESS-ANALYZER-OFF` | LOW | cloud | IAM Access Analyzer not enabled | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
+| `AWS-CHECK-SKIPPED` | INFO | cloud | AWS check could not run |  |  |  |
+| `AWS-CLOUDTRAIL-GAP` | HIGH | cloud | No complete multi-region CloudTrail | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
+| `AWS-CONFIG-OFF` | LOW | cloud | AWS Config not recording | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
+| `AWS-EBS-DEFAULT-ENCRYPTION-OFF` | MEDIUM | cloud | EBS encryption by default is off | CWE-311 | A04:2025 | CIS AWS Foundations Benchmark |
+| `AWS-EC2-IMDSV1` | HIGH | cloud | Running instance allows IMDSv1 | CWE-918 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-EKS-PUBLIC-ENDPOINT` | MEDIUM | cloud | EKS API endpoint open to the internet | CWE-668 | A02:2025 | CIS AWS Foundations Benchmark |
+| `AWS-GUARDDUTY-OFF` | MEDIUM | cloud | GuardDuty not enabled | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
+| `AWS-IAM-ADMIN-POLICY` | CRITICAL | cloud | Customer policy grants *:* | CWE-250 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-IAM-OLD-ACCESS-KEY` | MEDIUM | cloud | Access key older than 90 days | CWE-324 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-IAM-UNUSED-CREDENTIAL` | LOW | cloud | Credential unused for 90+ days | CWE-1188 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-IAM-USER-ADMIN` | HIGH | cloud | AdministratorAccess attached to an IAM user | CWE-250 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-IAM-USER-NO-MFA` | HIGH | cloud | Console user without MFA | CWE-308 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-KMS-NO-ROTATION` | LOW | cloud | Customer KMS key without rotation | CWE-320 | A04:2025 | CIS AWS Foundations Benchmark |
+| `AWS-LAMBDA-DEPRECATED-RUNTIME` | MEDIUM | cloud | Lambda on a deprecated runtime | CWE-1104 | A06:2025 | CIS AWS Foundations Benchmark |
+| `AWS-LAMBDA-URL-PUBLIC` | HIGH | cloud | Lambda function URL without auth | CWE-306 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-PASSWORD-POLICY-WEAK` | MEDIUM | cloud | IAM password policy missing or weak | CWE-521 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-RDS-NO-BACKUPS` | HIGH | cloud | RDS automated backups disabled | CWE-404 | A02:2025 | CIS AWS Foundations Benchmark |
+| `AWS-RDS-PUBLIC` | CRITICAL | cloud | RDS instance publicly accessible | CWE-668 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-RDS-UNENCRYPTED` | HIGH | cloud | RDS storage not encrypted | CWE-311 | A04:2025 | CIS AWS Foundations Benchmark |
+| `AWS-ROOT-ACCESS-KEYS` | CRITICAL | cloud | Root account has access keys | CWE-250 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-ROOT-NO-MFA` | CRITICAL | cloud | Root account without MFA | CWE-308 | A07:2025 | CIS AWS Foundations Benchmark |
+| `AWS-S3-ACCOUNT-PAB-OFF` | HIGH | cloud | Account-level S3 Block Public Access not fully enabled | CWE-284 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-S3-BUCKET-PUBLIC` | CRITICAL | cloud | S3 bucket is public | CWE-284 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-S3-NO-TLS-ENFORCEMENT` | MEDIUM | cloud | S3 bucket does not deny plain HTTP | CWE-319 | A04:2025 | CIS AWS Foundations Benchmark |
+| `AWS-SG-ADMIN-PORT-OPEN` | CRITICAL | cloud | Security group opens an admin port to the internet | CWE-668 | A02:2025 | CIS AWS Foundations Benchmark |
+| `AWS-SG-ALL-OPEN` | CRITICAL | cloud | Security group allows all traffic from the internet | CWE-668 | A02:2025 | CIS AWS Foundations Benchmark |
+| `AWS-SG-DATA-PORT-OPEN` | CRITICAL | cloud | Security group opens a database port to the internet | CWE-668 | A02:2025 | CIS AWS Foundations Benchmark |
+| `AWS-SNAPSHOT-PUBLIC` | CRITICAL | cloud | EBS snapshot or AMI shared publicly | CWE-200 | A01:2025 | CIS AWS Foundations Benchmark |
+| `AWS-VPC-NO-FLOW-LOGS` | LOW | cloud | VPC without flow logs | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
 | `CODE-CMD-INJECTION` | CRITICAL | code | OS command built from dynamic input | CWE-78, CWE-77 | A05:2025 |  |
 | `CODE-COOKIE-FLAGS` | MEDIUM | code | Session cookie without Secure/HttpOnly | CWE-614, CWE-1004 | A07:2025 |  |
 | `CODE-CORS-PERMISSIVE` | HIGH | code | CORS reflects any origin with credentials | CWE-942 | A02:2025 |  |
@@ -65,6 +104,7 @@ Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35,
 | `CODE-WEAK-SANDBOX` | HIGH | code | Untrusted code run in a non-isolating sandbox | CWE-94 | A05:2025 |  |
 | `CODE-XSS-SINK` | MEDIUM | code | Untrusted HTML written to the DOM | CWE-79 | A05:2025 |  |
 | `CODE-XXE` | MEDIUM | code | XML parser without external-entity protection | CWE-611 | A02:2025 |  |
+| `CTX-BIND-ALL` | INFO | code | Server binds all interfaces (context) |  |  |  |
 | `COMPOSE-DOCKER-SOCKET` | CRITICAL | containers | Docker socket mounted into a container | CWE-250 | A02:2025 | K01:2025 Insecure Workload Configurations |
 | `COMPOSE-PRIVILEGED` | HIGH | containers | Compose service with host-level privileges | CWE-250 | A02:2025 | K01:2025 Insecure Workload Configurations |
 | `DOCKER-ADD-REMOTE` | MEDIUM | containers | ADD fetches a remote URL without verification | CWE-494 | A08:2025 |  |
@@ -78,6 +118,7 @@ Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35,
 | `DOCKER-UNPINNED-BASE` | MEDIUM | containers | Base image not pinned | CWE-1357 | A03:2025, A08:2025 |  |
 | `DOCKER-WORLD-WRITABLE` | MEDIUM | containers | World-writable permissions | CWE-732 | A02:2025 |  |
 | `COMPOSE-DATA-PORT-PUBLISHED` | HIGH | data | Database port published on all interfaces | CWE-668 | A02:2025 |  |
+| `CTX-BAAS-CLIENT` | INFO | data | Front-end BaaS client with public key (context) |  |  |  |
 | `DATA-ATLAS-OPEN-ACCESS-LIST` | CRITICAL | data | MongoDB Atlas access list open to the internet | CWE-668 | A02:2025 |  |
 | `DATA-CONNECTION-STRING-CREDS` | CRITICAL | data | Database connection string with embedded password | CWE-798 | A07:2025 |  |
 | `DATA-DUMP-COMMITTED` | HIGH | data | Database dump or local database file committed | CWE-538 | A02:2025 | Québec Law 25, PIPEDA, GDPR Art. 32 |
@@ -129,6 +170,17 @@ Generated with `rempart rules --markdown`. 216 rules · ai 10, cicd 16, code 35,
 | `TF-STATE-COMMITTED` | CRITICAL | iac | Terraform state file committed | CWE-312, CWE-538 | A04:2025 |  |
 | `TF-TFVARS-SECRET` | HIGH | iac | Secret value in a committed .tfvars file | CWE-798 | A07:2025 |  |
 | `TF-TLS-OUTDATED` | MEDIUM | iac | Outdated TLS version allowed | CWE-326 | A04:2025 |  |
+| `IMG-HISTORY-REMOTE-SCRIPT` | MEDIUM | image | Image built by piping a remote script into a shell | CWE-494 | A03:2025 |  |
+| `IMG-NO-HEALTHCHECK` | LOW | image | Image has no HEALTHCHECK | CWE-1188 |  |  |
+| `IMG-OS-EOL` | HIGH | image | Base OS release is end-of-life | CWE-1104, CWE-1395 | A06:2025 |  |
+| `IMG-PACKAGES-NOT-ANALYSED` | INFO | image | Some packages could not be analysed |  |  |  |
+| `IMG-RUNS-AS-ROOT` | MEDIUM | image | Image runs as root by default | CWE-250 | A02:2025 |  |
+| `IMG-RUNTIME-EOL` | HIGH | image | Language runtime in the image is end-of-life | CWE-1104 | A06:2025 |  |
+| `IMG-SECRET-IN-CONFIG` | HIGH | image | Secret in image environment or build history | CWE-798, CWE-538 | A07:2025 |  |
+| `IMG-SECRET-IN-FILE` | HIGH | image | Secret file shipped inside the image | CWE-798, CWE-538 | A07:2025 |  |
+| `IMG-SSH-EXPOSED` | MEDIUM | image | Image exposes SSH | CWE-668 | A02:2025 |  |
+| `IMG-STALE` | MEDIUM | image | Image has not been rebuilt in over a year | CWE-1104 | A06:2025 |  |
+| `IMG-VULNERABLE-PACKAGE` | HIGH | image | Image package with a known vulnerability | CWE-1395 | A03:2025 |  |
 | `K8S-CLUSTER-ADMIN-BINDING` | HIGH | kubernetes | Binding to cluster-admin or anonymous users | CWE-269 | A01:2025 | K02:2025 Overly Permissive Authorization Configurations, K06:2025 Overly Exposed Kubernetes Components |
 | `K8S-DANGEROUS-CAPS` | HIGH | kubernetes | Dangerous Linux capabilities added | CWE-250 | A02:2025 | K01:2025 Insecure Workload Configurations, Pod Security Standards (restricted) |
 | `K8S-HOST-NAMESPACE` | HIGH | kubernetes | Pod shares host namespaces | CWE-668 | A02:2025 | K01:2025 Insecure Workload Configurations, Pod Security Standards (restricted) |

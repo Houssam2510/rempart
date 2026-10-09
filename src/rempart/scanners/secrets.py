@@ -166,6 +166,8 @@ class SecretsScanner:
                 if test_path:
                     f.confidence = 0.4
                     f.severity = f.severity.lower() if f.severity else None
+                if getattr(ctx, "verify_secrets", False):
+                    _apply_verification(f, rid, token, text)
                 yield f
             if hit_provider:
                 continue
@@ -187,3 +189,21 @@ class SecretsScanner:
                     f.severity = f.severity.lower() if f.severity else None
                 yield f
                 break
+
+
+def _apply_verification(f: Finding, rule_id: str, token: str, file_text: str) -> None:
+    from rempart.models import Severity
+    from rempart.verify import verify
+
+    v = verify(rule_id, token, file_text)
+    f.extra["verification_detail"] = v.detail
+    if v.status == "live":
+        f.verification = "live-secret"
+        f.severity, f.confidence = Severity.CRITICAL, 1.0
+        f.message += f" VERIFIED LIVE: {v.detail}. Rotate it now."
+    elif v.status == "revoked":
+        f.verification = "revoked-secret"
+        f.severity, f.confidence = Severity.LOW, 1.0
+        f.message += " Provider rejects it (revoked): purge it from git history."
+    else:
+        f.message += f" (live check inconclusive: {v.detail})"

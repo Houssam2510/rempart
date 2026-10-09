@@ -43,6 +43,7 @@ class ScanContext:
     tracked: set[str] | None
     config: Config
     offline: bool = False
+    verify_secrets: bool = False
     _cache: dict[str, str | None] = field(default_factory=dict)
 
     def text(self, rel: str) -> str | None:
@@ -141,6 +142,15 @@ class ScanResult:
     scanners: list[str]
     suppressed: int = 0
     errors: list[str] = field(default_factory=list)
+    context: list[Finding] = field(default_factory=list)
+
+    def add_attack_paths(self) -> None:
+        """Correlate the (already triaged) findings into attack chains."""
+        from rempart.correlate import correlate
+
+        self.findings = [f for f in self.findings if f.rule.domain != "attack-path"]
+        self.findings += correlate(self.findings, self.context)
+        self.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
 
     def counts(self) -> dict[str, int]:
         c = {s.name: 0 for s in Severity}
@@ -182,10 +192,12 @@ def run_scan(
     config: Config,
     *,
     offline: bool = False,
+    correlate: bool = True,
+    verify_secrets: bool = False,
 ) -> ScanResult:
     start = time.monotonic()
     files, tracked = discover(root, config)
-    ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline)
+    ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline, verify_secrets=verify_secrets)
     findings: list[Finding] = []
     errors: list[str] = []
     suppressed = 0
@@ -210,7 +222,9 @@ def run_scan(
             seen.add(key)
             findings.append(f)
     findings.sort(key=lambda f: (-f.risk, f.path, f.line))
-    return ScanResult(
+    from rempart.correlate import context_signals
+
+    result = ScanResult(
         root=str(root),
         findings=findings,
         files_scanned=len(files),
@@ -218,7 +232,11 @@ def run_scan(
         scanners=[s.name for s in scanners],
         suppressed=suppressed,
         errors=errors,
+        context=context_signals(files, ctx.text),
     )
+    if correlate:
+        result.add_attack_paths()
+    return result
 
 
 # ---------------------------------------------------------------- helpers for scanners

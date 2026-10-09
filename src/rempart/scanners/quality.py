@@ -45,8 +45,12 @@ R_HEAVY_IMPORT = rule("PERF-HEAVY-IMPORT", "Whole heavy library imported", L, "p
                       fix="Import only the function you need (lodash-es/debounce, date-fns) or drop moment.js (unmaintained, 300 kB) for date-fns/dayjs/Temporal.", confidence=0.7)
 
 AUTHY = re.compile(r"(?i)auth|verify|permission|authori[sz]e|is_?allowed|can_?access|has_?access|check_?access|is_?admin|validate_?token|guard|policy")
-DB_CALLS = {"execute", "executemany", "fetchone", "fetchall", "get", "filter", "first", "one", "query", "find", "find_one", "find_many", "aggregate", "scalar", "scalars"}
-DB_RECEIVERS = re.compile(r"(?i)cursor|session|db|conn|connection|objects|collection|query|repo|client|engine|table|model")
+# Unambiguous query methods, accepted on any database-looking receiver.
+DB_CALLS = {"execute", "executemany", "fetchone", "fetchall", "find", "find_one", "find_many", "aggregate", "scalar", "scalars", "count_documents"}
+# Methods that are also dict/list methods: only count on ORM entry points (Model.objects, session, query).
+ORM_ONLY_CALLS = {"get", "filter", "first", "one", "all", "query"}
+DB_RECEIVER = re.compile(r"(?i)(?:.*[._])?(?:cursor|cur|session|db|conn|connection|collection|coll|client|engine|repo|repository|table|model|objects|query)")
+ORM_RECEIVER = re.compile(r"(?i)(?:.*\.)?(?:objects|session|query|db\.session)")
 JS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".svelte", ".vue")
 
 
@@ -129,7 +133,8 @@ class QualityScanner:
                 for sub in ast.walk(ast.Module(body=node.body, type_ignores=[])):
                     if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
                         recv = ast.unparse(sub.func.value)
-                        if (sub.func.attr in DB_CALLS and DB_RECEIVERS.search(recv)) or (recv in ("requests", "httpx") and sub.func.attr in ("get", "post", "put", "delete")):
+                        if (sub.func.attr in DB_CALLS and DB_RECEIVER.fullmatch(recv)) or (sub.func.attr in ORM_ONLY_CALLS and ORM_RECEIVER.fullmatch(recv)) \
+                                or (recv in ("requests", "httpx") and sub.func.attr in ("get", "post", "put", "delete")):
                             yield Finding(R_N_PLUS_ONE, rel, sub.lineno, f"{recv}.{sub.func.attr}() runs once per loop iteration.", snippet=snip(sub))
                             break
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):

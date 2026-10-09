@@ -139,7 +139,7 @@ LINE_RULES: list[LineRule] = [
     lr(R_CODE_INJ, JS, r"(?<![\w.])eval\s*\((?!\s*[\"'][^\"'$]*[\"']\s*\))", "eval() on a non-constant value."),
     lr(R_CODE_INJ, JS, r"\bnew\s+Function\s*\(", "new Function() compiles a string into code."),
     lr(R_CODE_INJ, JS, r"\bset(?:Timeout|Interval)\s*\(\s*(?:`[^`]*\$\{|[\"'][^\"']*[\"']\s*\+)", "Timer called with a code string."),
-    lr(R_CMD_INJ, JS, r"\b(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+\s*\w)", "Shell command built by interpolation."),
+    lr(R_CMD_INJ, JS, r"(?:(?<![\w.])|child_process\.|\bcp\.)(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+\s*\w)", "Shell command built by interpolation."),
     lr(R_SHELL_TRUE, JS, r"\bspawn(?:Sync)?\s*\([^)]*shell\s*:\s*true", "spawn() with shell: true."),
     lr(R_SQLI, JS, r"(?:\.query|\.execute|\.raw|\$queryRawUnsafe|\$executeRawUnsafe|sequelize\.query|knex\.raw|\.prepare|sql\.unsafe)\s*\(\s*`[^`]*\$\{", "SQL text built with a template literal."),
     lr(R_SQLI, JS + JAVA + GO + CS + PY, r"[\"'`]\s*(?:SELECT\s[^\"'`]*\sFROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^\"'`]*[\"'`]\s*\+\s*[\w(]", "SQL text concatenated with a variable."),
@@ -217,6 +217,7 @@ LINE_RULES: list[LineRule] = [
     lr(R_TLS, CS, r"ServerCertificateValidationCallback\s*=\s*[^;]*=>\s*true|ServerCertificateCustomValidationCallback\s*=\s*[^;]*=>\s*true|DangerousAcceptAnyServerCertificateValidator", "Certificate validation bypassed."),
 ]
 _SECRET_CTX = re.compile(_SECRETY)
+_JS_EXEC_IMPORT = re.compile(r"child_process|\bexeca\b|shelljs|from\s+['\"]zx['\"]|node:child_process|Bun\.spawn|Deno\.Command")
 _SESSION_CTX = re.compile(r"(?i)sess|auth|token|jwt|\bsid\b|login|remember|refresh|csrf")
 
 _REGEX_LITERAL = re.compile(r"(?:new\s+RegExp\(\s*[\"'`]|re\.(?:compile|match|search|fullmatch|findall|sub)\(\s*r?[\"']|(?<![\w)\]])/(?=[^/*\s]))((?:[^\"'`/\\\n]|\\.){3,200})")
@@ -291,6 +292,50 @@ def _catastrophic(pattern: str) -> bool:
 _BIDI = re.compile("[\u202a-\u202e\u2066-\u2069\u200b-\u200f\u2060-\u2064\ufeff\U000e0000-\U000e007f]")
 
 
+_JS_SOURCE = re.compile(r"(?:\breq|\brequest|ctx\.request|event\.request)\.(?:query|body|params|headers|cookies)\b|\burl\.searchParams\b|searchParams\.get\(|await\s+request\.(?:json|formData|text)\(\)|\bformData\.get\(|\bevent\.params\b|location\.(?:search|hash)\b|\bprocess\.argv\b")
+_JS_DECL = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=;\n]+)?=\s*([^;\n]+)")
+_JS_DESTRUCT = re.compile(r"(?:const|let|var)\s*\{([^}]*)\}\s*(?::\s*[^=;\n]+)?=\s*([^;\n]+)")
+_JS_DYNAMIC_RHS = re.compile(r"^\s*`[^`]*\$\{|^\s*[\"'][^\"']*[\"']\s*\+\s*[A-Za-z_$]")
+
+# (rule, sink pattern with {N} placeholder for the tracked-name alternation, which names count, message)
+_JS_TAINT_SINKS = [
+    (R_SQLI, r"(?:\.query|\.execute|\.raw|\$queryRawUnsafe|\$executeRawUnsafe|sequelize\.query|knex\.raw|sql\.unsafe|\.prepare)\s*\(\s*({N})\b", "dyn", "SQL text in `{v}` was built by interpolation"),
+    (R_CMD_INJ, r"(?:(?<![\w.])|child_process\.|\bcp\.)(?:exec|execSync)\s*\(\s*({N})\b", "any", "shell command in `{v}` is built from {why}"),
+    (R_CODE_INJ, r"(?<![\w.])(?:eval|Function)\s*\(\s*({N})\b", "taint", "`{v}` comes from request data"),
+    (R_SSRF, r"\b(?:fetch|axios(?:\.(?:get|post|put|request))?|got|needle|https?\.(?:get|request))\s*\(\s*({N})\b", "taint", "URL in `{v}` comes from request data"),
+    (R_PATH, r"(?:readFile(?:Sync)?|createReadStream|sendFile|download|unlink(?:Sync)?|writeFile(?:Sync)?|readdir(?:Sync)?)\s*\(\s*(?:path\.(?:join|resolve)\([^)]*?)?\b({N})\b", "taint", "path in `{v}` comes from request data"),
+    (R_REDIRECT, r"\bredirect\s*\(\s*(?:\d{3}\s*,\s*)?({N})\b", "taint", "redirect target `{v}` comes from request data"),
+    (R_XSS, r"\.(?:innerHTML|outerHTML)\s*\+?=\s*({N})\b|__html\s*:\s*({N})\b|\{@html\s+({N})\b", "taint", "HTML in `{v}` comes from request data"),
+    (R_NOSQLI, r"\.(?:find|findOne|findOneAndUpdate|updateOne|updateMany|deleteOne|deleteMany|countDocuments)\(\s*({N})\s*[,)]", "taint", "query filter `{v}` is a raw request object"),
+    (R_REGEX_INJ, r"new\s+RegExp\s*\(\s*({N})\b", "taint", "pattern `{v}` comes from request data"),
+]
+
+
+def js_tracked_names(text: str) -> tuple[dict[str, int], dict[str, int]]:
+    """Return ({tainted_name: line}, {dynamic_string_name: line}) for one file.
+    Two passes so `a = req.body; b = a.url` taints b as well."""
+    tainted: dict[str, int] = {}
+    dynamic: dict[str, int] = {}
+    for _ in range(2):
+        known = re.compile(r"\b(?:" + "|".join(map(re.escape, tainted)) + r")\b") if tainted else None
+        for m in _JS_DECL.finditer(text):
+            name, rhs = m.group(1), m.group(2)
+            line = text.count("\n", 0, m.start()) + 1
+            if _JS_SOURCE.search(rhs) or (known and known.search(rhs)):
+                tainted.setdefault(name, line)
+            if _JS_DYNAMIC_RHS.search(rhs):
+                dynamic.setdefault(name, line)
+        for m in _JS_DESTRUCT.finditer(text):
+            if _JS_SOURCE.search(m.group(2)) or (known and known.search(m.group(2))):
+                line = text.count("\n", 0, m.start()) + 1
+                for part in m.group(1).split(","):
+                    part = part.split("=")[0].strip()
+                    alias = part.split(":")[-1].strip().lstrip(".")
+                    if re.fullmatch(r"[A-Za-z_$][\w$]*", alias or ""):
+                        tainted.setdefault(alias, line)
+    return tainted, dynamic
+
+
 class CodeScanner:
     name = "code"
 
@@ -326,7 +371,35 @@ class CodeScanner:
                     continue
                 if r.rule is R_COOKIE and not _SESSION_CTX.search("\n".join(all_lines[max(0, i - 8): i + 3])):
                     continue
+                if r.rule in (R_CMD_INJ, R_SHELL_TRUE) and lower.endswith(JS) and not _JS_EXEC_IMPORT.search(text):
+                    continue
                 yield Finding(r.rule, rel, i, r.message, snippet=line.strip()[:240])
+
+    def _js_taint(self, rel: str, text: str) -> Iterator[Finding]:
+        tainted, dynamic = js_tracked_names(text)
+        if not tainted and not dynamic:
+            return
+        pools = {"taint": tainted, "dyn": {**dynamic, **{k: v for k, v in tainted.items()}}, "any": {**dynamic, **tainted}}
+        lines = text.splitlines()
+        for r, pattern, which, msg in _JS_TAINT_SINKS:
+            names = pools[which]
+            if not names:
+                continue
+            rx = re.compile(pattern.replace("{N}", "|".join(map(re.escape, sorted(names, key=len, reverse=True)))))
+            if r is R_CMD_INJ and not _JS_EXEC_IMPORT.search(text):
+                continue
+            for m in rx.finditer(text):
+                v = next(g for g in m.groups() if g)
+                ln = text.count("\n", 0, m.start()) + 1
+                if ln <= names[v]:
+                    continue  # use must come after the assignment
+                line = lines[ln - 1] if ln <= len(lines) else ""
+                if is_comment(line) or re.search(r"DOMPurify|sanitize|escape|parseInt|Number\(|encodeURIComponent|basename\(", line):
+                    continue
+                why = "request data" if v in tainted else "string interpolation"
+                f = Finding(r, rel, ln, msg.format(v=v, why=why) + f" (assigned on line {names[v]}).", snippet=line.strip()[:240])
+                f.extra["dataflow"] = {"variable": v, "source_line": names[v]}
+                yield f
 
     def _file_rules(self, rel: str, text: str) -> Iterator[Finding]:
         # Trojan Source / invisible characters
@@ -342,6 +415,8 @@ class CodeScanner:
             if _catastrophic(body):
                 ln = line_of(text, m.start())
                 yield Finding(R_REDOS, rel, ln, "Nested quantifier in a regular expression.", snippet=body[:120])
+        if rel.endswith(JS):
+            yield from self._js_taint(rel, text)
         if rel.endswith(JS) and re.search(r"(?:^|/)(?:api|routes?|server|controllers?|handlers?|app)/|\+(?:page\.)?server\.[jt]s$|route\.[jt]s$", rel):
             lines = text.splitlines()
             for i, line in enumerate(lines, 1):
@@ -411,13 +486,20 @@ def _is_constant(node: ast.AST | None) -> bool:
     return False
 
 
-def _touches_request(node: ast.AST | None) -> bool:
+_TAINT_SOURCES = ("request", "req", "flask.request", "self.request")
+
+
+def _touches_request(node: ast.AST | None, tainted: frozenset[str] | set[str] = frozenset()) -> bool:
+    """True when the expression reads request data directly, or a variable that
+    was assigned from request data earlier in the same function."""
     if node is None:
         return False
     for sub in ast.walk(node):
         if isinstance(sub, ast.Attribute) and _dotted(sub).split(".")[0] in ("request", "req"):
             return True
-        if isinstance(sub, ast.Name) and sub.id in ("user_input", "user_url", "untrusted"):
+        if isinstance(sub, ast.Name) and (sub.id in tainted or sub.id in ("user_input", "user_url", "untrusted")):
+            return True
+        if isinstance(sub, ast.Call) and _dotted(sub.func) in ("input", "sys.stdin.read", "sys.stdin.readline"):
             return True
     return False
 
@@ -435,12 +517,45 @@ def _kw_is(call: ast.Call, name: str, value: object) -> bool:
 
 
 class PythonAnalyzer(ast.NodeVisitor):
+    """Single pass over the module. Each function gets a scope that records
+    variables assigned from request data (`tainted`) and variables holding
+    strings built by interpolation (`dynamic`), so `q = f"...{x}"; cur.execute(q)`
+    and `url = request.args["u"]; requests.get(url)` are both caught."""
+
     def __init__(self, rel: str, text: str) -> None:
         self.rel = rel
         self.text = text
         self.lines = text.splitlines()
         self.out: list[Finding] = []
         self.is_settings = rel.endswith(("settings.py", "config.py")) or "/settings/" in rel
+        self.scopes: list[dict[str, set[str]]] = [{"tainted": set(), "dynamic": set()}]
+
+    @property
+    def tainted(self) -> set[str]:
+        return self.scopes[-1]["tainted"]
+
+    @property
+    def dynamic(self) -> set[str]:
+        return self.scopes[-1]["dynamic"]
+
+    def _dyn(self, node: ast.AST | None) -> bool:
+        return _is_dynamic_str(node) or (isinstance(node, ast.Name) and node.id in self.dynamic)
+
+    def _req(self, node: ast.AST | None) -> bool:
+        return _touches_request(node, self.tainted)
+
+    def _track(self, targets: list[ast.expr], value: ast.AST) -> None:
+        names: list[str] = []
+        for t in targets:
+            for sub in ast.walk(t):
+                if isinstance(sub, ast.Name):
+                    names.append(sub.id)
+        if not names:
+            return
+        if self._req(value):
+            self.tainted.update(names)
+        if _is_dynamic_str(value) or (isinstance(value, ast.Name) and value.id in self.dynamic):
+            self.dynamic.update(names)
 
     def run(self) -> list[Finding]:
         try:
@@ -455,7 +570,21 @@ class PythonAnalyzer(ast.NodeVisitor):
         snippet = self.lines[ln - 1].strip()[:240] if 0 < ln <= len(self.lines) else ""
         self.out.append(Finding(r, self.rel, ln, message, snippet=snippet))
 
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self._track([node.target], node.value)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        # x += f"...{y}"  or  sql += user_value
+        if isinstance(node.target, ast.Name) and (self._req(node.value) or _is_dynamic_str(node.value) or isinstance(node.value, (ast.Name, ast.Attribute, ast.Subscript))):
+            self.dynamic.add(node.target.id)
+            if self._req(node.value):
+                self.tainted.add(node.target.id)
+        self.generic_visit(node)
+
     def visit_Assign(self, node: ast.Assign) -> None:
+        self._track(list(node.targets), node.value)
         names = [t.id for t in node.targets if isinstance(t, ast.Name)]
         names += [t.attr for t in node.targets if isinstance(t, ast.Attribute)]
         for name in names:
@@ -476,7 +605,12 @@ class PythonAnalyzer(ast.NodeVisitor):
             name = _dotted(dec.func if isinstance(dec, ast.Call) else dec)
             if name.endswith("csrf_exempt"):
                 self.add(R_CSRF, dec, f"@csrf_exempt on {node.name}().")
+        # FastAPI-style handlers: parameters of route functions are request data.
+        route = any(re.search(r"\.(?:get|post|put|patch|delete|route|api_route|websocket)$", _dotted(d.func if isinstance(d, ast.Call) else d)) for d in node.decorator_list)
+        params = {a.arg for a in node.args.args + node.args.kwonlyargs} - {"self", "cls", "request", "db", "session"} if route else set()
+        self.scopes.append({"tainted": set(params), "dynamic": set()})
         self.generic_visit(node)
+        self.scopes.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
@@ -490,11 +624,11 @@ class PythonAnalyzer(ast.NodeVisitor):
             self.add(R_CODE_INJ, node, f"{name}() on a non-constant value.")
         if mod == "subprocess" or name in ("Popen", "check_output", "check_call"):
             if _kw_is(node, "shell", True):
-                if _is_dynamic_str(arg0) or _touches_request(arg0):
+                if self._dyn(arg0) or self._req(arg0):
                     self.add(R_CMD_INJ, node, "shell=True with an interpolated command.")
                 else:
                     self.add(R_SHELL_TRUE, node, "subprocess call with shell=True.")
-        if name in ("os.system", "os.popen", "commands.getoutput") and arg0 is not None and not _is_constant(arg0):
+        if name in ("os.system", "os.popen", "commands.getoutput") and arg0 is not None and not _is_constant(arg0) and (self._dyn(arg0) or self._req(arg0) or not isinstance(arg0, ast.Name)):
             self.add(R_CMD_INJ, node, f"{name}() with a non-constant command.")
         if (mod, short) in _PY_DESER or name in {f"{a}.{b}" for a, b in _PY_DESER}:
             if not (short == "load" and mod == "torch" and _kw_is(node, "weights_only", True)):
@@ -503,9 +637,10 @@ class PythonAnalyzer(ast.NodeVisitor):
             loader = _kw(node, "Loader") or (node.args[1] if len(node.args) > 1 else None)
             if loader is None or "Safe" not in _dotted(loader):
                 self.add(R_DESER, node, "yaml.load without SafeLoader.")
-        if short in _PY_SQL_SINKS and isinstance(node.func, ast.Attribute) and (_is_dynamic_str(arg0)):
-            self.add(R_SQLI, node, f".{short}() with an interpolated SQL string.")
-        if name in ("text", "sqlalchemy.text", "sa.text") and _is_dynamic_str(arg0):
+        if short in _PY_SQL_SINKS and isinstance(node.func, ast.Attribute) and self._dyn(arg0):
+            via = f" (built earlier in `{arg0.id}`)" if isinstance(arg0, ast.Name) else ""
+            self.add(R_SQLI, node, f".{short}() with an interpolated SQL string{via}.")
+        if name in ("text", "sqlalchemy.text", "sa.text") and self._dyn(arg0):
             self.add(R_SQLI, node, "sqlalchemy text() with an interpolated string.")
         if _kw_is(node, "verify", False) and mod in ("requests", "httpx", "session", "client", "s", "aiohttp", ""):
             self.add(R_TLS, node, "verify=False disables certificate checks.")
@@ -537,13 +672,13 @@ class PythonAnalyzer(ast.NodeVisitor):
         if short == "render_template_string" and arg0 is not None and not _is_constant(arg0):
             self.add(R_TEMPLATE, node, "render_template_string with a dynamic template (SSTI).")
         if mod in ("requests", "httpx", "urllib", "urllib.request", "aiohttp") or name == "urlopen":
-            if (short in _REQUESTS_FUNCS or short == "urlopen") and _touches_request(arg0):
+            if (short in _REQUESTS_FUNCS or short == "urlopen") and self._req(arg0 if arg0 is not None else _kw(node, "url")):
                 self.add(R_SSRF, node, f"{name}() to a URL taken from the request.")
-        if name in ("open", "send_file", "send_from_directory", "FileResponse", "os.remove", "shutil.rmtree") and _touches_request(arg0):
+        if name in ("open", "send_file", "send_from_directory", "FileResponse", "os.remove", "shutil.rmtree", "pathlib.Path", "Path") and self._req(arg0):
             self.add(R_PATH, node, f"{name}() with a path from the request.")
-        if short == "redirect" and _touches_request(arg0):
+        if short in ("redirect", "RedirectResponse", "HttpResponseRedirect") and self._req(arg0):
             self.add(R_REDIRECT, node, "redirect() to a URL from the request.")
-        if name in ("re.compile", "re.match", "re.search") and _touches_request(arg0):
+        if name in ("re.compile", "re.match", "re.search") and self._req(arg0):
             self.add(R_REGEX_INJ, node, "Regular expression built from request input.")
         if name in ("xml.etree.ElementTree.parse", "ET.parse", "ET.fromstring", "etree.parse", "etree.fromstring", "minidom.parse", "minidom.parseString", "xml.dom.minidom.parseString"):
             self.add(R_XXE, node, f"{name}() without defusedxml.")

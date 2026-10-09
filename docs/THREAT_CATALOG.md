@@ -30,6 +30,26 @@ Descriptions stay at the level of *what the weakness is and how to recognise it*
 
 ---
 
+## 1b. Attack paths
+
+Single findings are rated in isolation, while incidents are chains. Rempart correlates findings from every source (code, IaC, live AWS, images, CI/CD, data) into nine chain patterns, each reported as one CRITICAL `CHAIN-*` finding that names every link and the cheapest one to break:
+
+| Chain | Links | Real-world reference |
+|---|---|---|
+| `CHAIN-SSRF-TO-CLOUD-CREDENTIALS` | SSRF × IMDSv1 (Terraform or live) | Capital One, 2019 |
+| `CHAIN-EXPOSED-DATASTORE` | public port / public DB × missing auth or encryption | MongoDB wipe-and-ransom waves, 2026 |
+| `CHAIN-CI-UNTRUSTED-TO-RELEASE` | pwn request / script injection × write token, OIDC, shared cache or publish token | TanStack, May 2026 |
+| `CHAIN-RCE-TO-HOST` | RCE-class bug or KEV/high-EPSS CVE × privileged container, socket or hostPath | container escapes |
+| `CHAIN-BAAS-TABLE-PUBLIC` | missing RLS / open Firebase rules × public client key in the front-end | Supabase and Firebase leaks |
+| `CHAIN-DEBUG-CONSOLE-EXPOSED` | debug mode × bind on all interfaces | Werkzeug console RCE |
+| `CHAIN-XSS-SESSION-THEFT` | XSS sink × tokens readable by scripts | session hijacking |
+| `CHAIN-ADMIN-CREDENTIALS-EXPOSED` | `*:*` / AdministratorAccess × static key, leaked key, IMDSv1 or untrusted OIDC | cloud account takeover |
+| `CHAIN-WORM-PROPAGATION` | install-time code × publish token | Shai-Hulud, 2025 |
+
+Chains are built from co-occurrence in one repository or account, not from a resource graph. The links are named so a human (or `rempart agent`) can confirm them.
+
+---
+
 ## 2. Web applications: OWASP Top 10:2025
 
 ### A01 Broken Access Control
@@ -44,7 +64,7 @@ Descriptions stay at the level of *what the weakness is and how to recognise it*
 | Open redirect | ✅ | `CODE-OPEN-REDIRECT` |
 | CSRF protection disabled | ✅ | `CODE-CSRF-DISABLED` |
 | postMessage without origin checks | ✅ | `CODE-POSTMESSAGE-ORIGIN` |
-| Function-level authorization (admin endpoints reachable by users), privilege escalation through workflows | 🔭 | Needs runtime role testing |
+| Function-level authorization (admin endpoints reachable by users), privilege escalation through workflows | 🔭 | Needs runtime role testing; `rempart agent` can review candidates in code |
 | Public cloud storage and wildcard resource policies | ✅ | `TF-S3-PUBLIC-ACL`, `TF-POLICY-PUBLIC-PRINCIPAL`, `TF-GCP-PUBLIC-MEMBER`, `TF-AZURE-PUBLIC-BLOB` |
 
 ### A02 Security Misconfiguration
@@ -91,6 +111,7 @@ See section 4.
 | Regular expression DoS and regex injection | ✅ | `CODE-REDOS`, `CODE-REGEX-INJECTION` |
 | Prototype pollution | 🟡 | `CODE-PROTOTYPE-POLLUTION` (deep merges of request data) |
 | Prompt injection into LLM context | 🟡 | `AI-PROMPT-INJECTION-SURFACE` (section 10) |
+| Injection through an intermediate variable (`q = f"...{x}"; cur.execute(q)`) | ✅ | Intra-procedural data flow: Python AST taint per function (incl. FastAPI parameters), JS/TS variable tracking |
 | LDAP, XPath, header/CRLF, log injection | 🔭 | Roadmap |
 
 ### A06 Insecure Design
@@ -173,7 +194,8 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 | Registry tokens in `.npmrc` / `.pypirc` | ✅ | `SEC-NPMRC-TOKEN` |
 | Secrets in Docker layers, Compose, Kubernetes manifests, Terraform, MCP configs, prompts | ✅ | `DOCKER-SECRET-IN-IMAGE`, `COMPOSE-SECRET-LITERAL`, `K8S-SECRET-IN-ENV`, `TF-HARDCODED-PASSWORD`, `TF-TFVARS-SECRET`, `AI-MCP-SECRET-IN-CONFIG`, `AI-SECRET-IN-PROMPT` |
 | Secrets in git *history* (deleted but reachable) | 🔭 | Roadmap: `--history` mode over `git log -p` |
-| Live validity of a leaked key | 🔭 | Deliberately not done: Rempart never calls third-party APIs with found credentials |
+| Live validity of a leaked key | ✅ | Opt-in `--verify-secrets`: one read-only identity call per provider (13 providers incl. AWS STS with SigV4), marks `live-secret` / `revoked-secret` |
+| Secrets inside container images (files, ENV, build history) | ✅ | `IMG-SECRET-IN-FILE`, `IMG-SECRET-IN-CONFIG`, plus every `SEC-*` detector run on image files |
 
 ---
 
@@ -181,7 +203,7 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 
 | Threat | Real-world reference | Status | Rempart |
 |---|---|---|---|
-| Known-vulnerable dependency | React2Shell, Next.js middleware bypass (CVE-2025-29927) | ✅ | `DEP-VULNERABLE` with OSV + KEV + EPSS |
+| Known-vulnerable dependency | React2Shell, Next.js middleware bypass (CVE-2025-29927) | ✅ | `DEP-VULNERABLE` with OSV + KEV + EPSS, and reachability (imported / declared / transitive) |
 | Known-malicious release (worm, account takeover) | Shai-Hulud 1 and 2, Axios 1.14.1, TanStack | ✅ | `DEP-MALICIOUS` (OSV `MAL-` entries from the OpenSSF malicious-packages feed) |
 | Install-time code execution in your own package | Worm propagation vector | ✅ | `SUPPLY-INSTALL-SCRIPT` |
 | Typosquatting | Recurrent on npm and PyPI | 🟡 | `SUPPLY-TYPOSQUAT` (edit distance 1 from ~190 popular npm and PyPI names) |
@@ -231,7 +253,7 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 | Public Kubernetes control planes (EKS, GKE, AKS) | ✅ | `TF-K8S-PUBLIC-ENDPOINT` |
 | Terraform state and secrets committed; unencrypted remote state | ✅ | `TF-STATE-COMMITTED`, `TF-TFVARS-SECRET`, `TF-BACKEND-UNENCRYPTED` |
 | Mutable container registries | ✅ | `TF-REGISTRY-MUTABLE-TAGS` |
-| Drift between code and the deployed account | 🔭 | Covered by [cspm-lite](https://github.com/Houssam2510/cspm-lite) (live AWS API, CIS benchmark) |
+| Drift between code and the deployed account | ✅ | `rempart cloud aws`: 28 live read-only checks (`AWS-*`), correlated with code findings by `rempart scan --aws` |
 | CloudFormation, Pulumi, CDK, Bicep | 🔭 | Roadmap |
 | Cross-account trust and confused-deputy roles without `ExternalId` | 🟡 | Policies with `Principal "*"` and no condition are caught; account-level trust graphs are not |
 
@@ -248,7 +270,9 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 | Remote scripts and unverified downloads | ✅ | `DOCKER-CURL-PIPE-SHELL`, `DOCKER-ADD-REMOTE` |
 | Docker socket mounts, privileged/host-network services | ✅ | `COMPOSE-DOCKER-SOCKET`, `COMPOSE-PRIVILEGED` |
 | DB ports published on 0.0.0.0 (bypasses ufw) | ✅ | `COMPOSE-DATA-PORT-PUBLISHED` |
-| OS-package CVEs inside built images | 🔭 | Use [triage](https://github.com/Houssam2510/triage) (Trivy + KEV + EPSS) |
+| OS-package CVEs inside built images | ✅ | `rempart image`: dpkg/apk packages → OSV Debian/Ubuntu/Alpine + KEV + EPSS (`IMG-VULNERABLE-PACKAGE`) |
+| End-of-life base OS or language runtime | ✅ | `IMG-OS-EOL`, `IMG-RUNTIME-EOL` (Debian, Ubuntu, Alpine; Python, Node.js) |
+| RPM-based images, Go binaries, JARs | 🔭 | Reported as not analysed (`IMG-PACKAGES-NOT-ANALYSED`); roadmap |
 
 ---
 
@@ -259,7 +283,7 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 | K01 Insecure workload configurations | ✅ | `K8S-PRIVILEGED`, `K8S-PRIV-ESCALATION`, `K8S-RUNS-AS-ROOT`, `K8S-HOST-NAMESPACE`, `K8S-HOSTPATH`, `K8S-DANGEROUS-CAPS`, `K8S-WRITABLE-ROOTFS`, `K8S-NO-SECCOMP`, `K8S-UNPINNED-IMAGE` |
 | K02 Overly permissive authorization | ✅ | `K8S-RBAC-WILDCARD`, `K8S-RBAC-ESCALATE`, `K8S-RBAC-SECRETS`, `K8S-CLUSTER-ADMIN-BINDING`, `K8S-SA-TOKEN-AUTOMOUNT` |
 | K03 Secrets management failures | ✅ | `K8S-SECRET-COMMITTED`, `K8S-SECRET-IN-ENV` |
-| K04 Lack of cluster-level policy enforcement | 🔭 | Needs cluster access (admission controllers) |
+| K04 Lack of cluster-level policy enforcement | 🔭 | Needs admission-controller inventory; roadmap for `rempart k8s` |
 | K05 Missing network segmentation | 🟡 | `K8S-SERVICE-EXPOSED`; NetworkPolicy coverage is on the roadmap |
 | K06 Overly exposed components | 🟡 | `TF-K8S-PUBLIC-ENDPOINT`, `K8S-SERVICE-EXPOSED` |
 | K07 Misconfigured and vulnerable cluster components | 🔭 | Needs cluster version data |
@@ -268,7 +292,7 @@ The memory-safety entries (416, 125, 476) need compiler instrumentation, sanitiz
 | K10 Inadequate logging | 🔭 | Needs cluster audit config |
 | Reliability: resource limits, probes | ✅ | `K8S-NO-RESOURCE-LIMITS`, `K8S-NO-PROBES` |
 
-Helm templates are skipped until rendered (`helm template . \| rempart` support is on the roadmap).
+`rempart k8s` runs every K01-K03/K05/K06/K09 check against the live cluster through kubectl (workloads judged at their owner, system namespaces excluded by default, Secrets never read). Helm templates are skipped until rendered.
 
 ---
 

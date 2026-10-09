@@ -140,3 +140,68 @@ class CoverageExtensionTest(unittest.TestCase):
     def test_owner_scoped_lookup_not_flagged(self):
         res = scan_tree({"src/routes/api/x.ts": "const doc = await prisma.doc.findFirst({ where: { id: params.id, ownerId: locals.user.id } });\n"}, ["code"])
         self.assertNotIn("CODE-IDOR-CANDIDATE", rule_ids(res))
+
+
+class DataflowTest(unittest.TestCase):
+    """Values that reach a sink through a variable (one or two assignments)."""
+
+    def test_python_through_variables(self):
+        src = '''
+import os, requests, subprocess
+from flask import request
+from fastapi import FastAPI
+app = FastAPI()
+
+def report(cur):
+    user_id = request.args["id"]
+    q = f"SELECT * FROM t WHERE id = {user_id}"
+    cur.execute(q)
+    target = request.args.get("url")
+    requests.get(target, timeout=5)
+    cmd = "tar -xf " + request.args["f"]
+    os.system(cmd)
+
+@app.get("/fetch")
+def fetch(url: str):
+    return requests.get(url, timeout=5).text
+
+def safe(cur, user_id):
+    q = "SELECT * FROM t WHERE id = %s"
+    cur.execute(q, (user_id,))
+'''
+        res = scan_tree({"svc.py": src}, ["code"])
+        by_line = {(f.rule.id, f.line) for f in res.findings}
+        # scan_tree strips the leading newline, so line 1 is "import os, ..."
+        self.assertIn(("CODE-SQL-INJECTION", 9), by_line)
+        self.assertIn(("CODE-SSRF", 11), by_line)
+        self.assertIn(("CODE-CMD-INJECTION", 13), by_line)
+        self.assertIn(("CODE-SSRF", 17), by_line)
+        self.assertEqual([r for r, ln in by_line if ln == 21], [])
+
+    def test_javascript_through_variables(self):
+        src = (
+            "export async function POST({ request, url }) {\n"
+            "  const body = await request.json();\n"
+            "  const target = body.webhook;\n"
+            "  await fetch(target);\n"
+            "  const sql = `DELETE FROM notes WHERE id = ${body.id}`;\n"
+            "  await db.query(sql);\n"
+            "  const { file } = req.query;\n"
+            "  res.sendFile(file);\n"
+            "  const next = url.searchParams.get('next');\n"
+            "  throw redirect(303, next);\n"
+            "  const n = parseInt(body.n);\n"
+            "}\n"
+        )
+        res = scan_tree({"src/routes/api/+server.ts": src}, ["code"])
+        got = {(f.rule.id, f.line) for f in res.findings}
+        for expected in [("CODE-SSRF", 4), ("CODE-SQL-INJECTION", 6), ("CODE-PATH-TRAVERSAL", 8), ("CODE-OPEN-REDIRECT", 10)]:
+            self.assertIn(expected, got)
+
+
+class RegexExecRegressionTest(unittest.TestCase):
+    def test_regexp_exec_is_not_command_execution(self):
+        src = "export async function f(event) {\n  const header = event.request.headers.get('authorization') ?? '';\n  const m = /^Bearer\\s+(.+)$/i.exec(header.trim());\n}\n"
+        self.assertNotIn("CODE-CMD-INJECTION", rule_ids(scan_tree({"src/lib/server/auth.ts": src}, ["code"])))
+        src2 = "import { exec } from 'node:child_process';\nconst name = req.query.name;\nexec(name);\n"
+        self.assertIn("CODE-CMD-INJECTION", rule_ids(scan_tree({"x.js": src2}, ["code"])))

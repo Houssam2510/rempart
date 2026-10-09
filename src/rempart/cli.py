@@ -46,7 +46,26 @@ def cmd_scan(args: argparse.Namespace) -> int:
             return 2
     if args.skip:
         names = [n for n in names if n not in {s.strip() for s in args.skip.split(",")}]
-    result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline)
+    result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline, correlate=False,
+                      verify_secrets=args.verify_secrets)
+    # Optional live sources merged into the same result, so attack paths can span code and production.
+    if args.aws:
+        from rempart.cloud_aws import audit as aws_audit
+
+        try:
+            result.findings += list(aws_audit(profile=None if args.aws == "default" else args.aws))
+            result.scanners.append("cloud-aws")
+        except Exception as exc:  # credentials, boto3 missing
+            result.errors.append(f"aws: {exc}")
+    for image in args.image or []:
+        from rempart.images import scan_image
+
+        try:
+            result.findings += scan_image(image, offline=args.offline)[0]
+            result.scanners.append(f"image:{image}")
+        except Exception as exc:  # registry/network/archive errors
+            result.errors.append(f"image {image}: {exc}")
+    result.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
 
     diff = None
     if not args.no_history:
@@ -54,9 +73,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
         project = _project_id(root)
         result.findings, learned_suppressed = hist.apply_knowledge(project, result.findings)
         result.suppressed += learned_suppressed
+        result.add_attack_paths()
         scan_id = hist.record(project, result)
         diff = hist.diff_with_previous(project, scan_id)
         hist.close()
+    else:
+        result.add_attack_paths()
 
     if args.format == "console":
         print(render_console(result, limit=args.limit, min_severity=Severity.parse(args.min_severity), diff=diff, verbose=args.verbose))
@@ -97,6 +119,121 @@ def cmd_web(args: argparse.Namespace) -> int:
     else:
         print(RENDERERS[args.format](result))
     return _exit_code(result, args.fail_on)
+
+
+def _render(findings: list, root: str, args: argparse.Namespace, header: str = "", duration: float = 0.0, scanners: tuple[str, ...] = ()) -> int:
+    from rempart.reporters import RENDERERS, render_console
+
+    findings.sort(key=lambda f: -f.risk)
+    result = ScanResult(root=root, findings=findings, files_scanned=0, duration_s=duration, scanners=list(scanners))
+    if args.format == "console":
+        if header:
+            print(header)
+        print(render_console(result, limit=getattr(args, "limit", 60), min_severity=Severity.parse(args.min_severity), verbose=args.verbose))
+    else:
+        out = RENDERERS[args.format](result)
+        if getattr(args, "output", None):
+            Path(args.output).write_text(out, encoding="utf-8")
+            print(f"rempart: {len(findings)} findings → {args.output}", file=sys.stderr)
+        else:
+            print(out)
+    return _exit_code(result, args.fail_on)
+
+
+def cmd_image(args: argparse.Namespace) -> int:
+    from rempart.images import scan_image
+    from rempart.netcache import NetworkError
+
+    try:
+        findings, meta = scan_image(args.image, platform=args.platform, offline=args.offline, max_mb=args.max_mb)
+    except (NetworkError, ValueError, OSError) as exc:
+        print(f"rempart: {exc}", file=sys.stderr)
+        return 2
+    header = f"{meta.get('label')} · {meta.get('os')} · {meta.get('packages')} packages · user {meta.get('user')} · built {str(meta.get('created'))[:10]}"
+    return _render(findings, f"image:{meta.get('label')}", args, header, scanners=("image",))
+
+
+def cmd_cloud(args: argparse.Namespace) -> int:
+    from rempart.cloud_aws import audit
+
+    regions = [r.strip() for r in args.regions.split(",")] if args.regions else None
+    try:
+        findings = list(audit(profile=args.profile, regions=regions))
+    except Exception as exc:  # credentials, boto3 missing, network
+        print(f"rempart: AWS audit failed: {exc}", file=sys.stderr)
+        return 2
+    account = findings[0].path.split("/")[2] if findings else "?"
+    return _render(findings, f"aws:{account}", args, f"AWS account {account} · {len(regions) if regions else 'all enabled'} region(s) · read-only", scanners=("cloud",))
+
+
+def cmd_k8s(args: argparse.Namespace) -> int:
+    from rempart.kube_live import audit
+
+    try:
+        findings = audit(context=args.context, include_system=args.include_system)
+    except (RuntimeError, ValueError) as exc:
+        print(f"rempart: {exc}", file=sys.stderr)
+        return 2
+    return _render(findings, f"k8s:{args.context or 'current-context'}", args, scanners=("kubernetes",))
+
+
+def cmd_agent(args: argparse.Namespace) -> int:
+    from rempart.agent import VerificationAgent, apply_fixes, apply_report, render_report_md, select_targets
+    from rempart.engine import discover
+    from rempart.history import History
+    from rempart.reporters import render_console
+    from rempart.scanners import ALL_SCANNERS
+
+    root = Path(args.path).resolve()
+    config = Config.load(root)
+    result = run_scan(root, list(ALL_SCANNERS.values()), config, offline=args.offline, correlate=False)
+    hist = History()
+    project = _project_id(root)
+    result.findings, _ = hist.apply_knowledge(project, result.findings)
+    targets = select_targets(result.findings, Severity.parse(args.min_severity), args.max_findings)
+    if not targets:
+        print("Nothing for the agent to verify at this severity.")
+        return 0
+    files, _ = discover(root, config)
+    try:
+        agent = VerificationAgent(result, files, model=args.model, effort=args.effort, max_turns=args.max_turns,
+                                  log=lambda s: print(s, file=sys.stderr))
+        print(f"Verifying {len(targets)} finding(s) with {agent.model}…", file=sys.stderr)
+        report = agent.run(targets)
+    except RuntimeError as exc:
+        print(f"rempart: {exc}", file=sys.stderr)
+        return 2
+    apply_report(result.findings, report)
+    result.add_attack_paths()
+    hist.record(project, result)
+    for fid, v in report.verdicts.items():
+        if v.verdict in ("confirmed", "false_positive"):
+            hist.triage(project, fid, "tp" if v.verdict == "confirmed" else "fp", f"AI: {v.reasoning[:300]}", source="ai")
+    hist.close()
+    md = render_report_md(report, result.findings, root)
+    Path(args.report).write_text(md, encoding="utf-8")
+    if report.fixes:
+        patch = "".join(f.diff(root) for f in report.fixes)
+        Path(args.patch).write_text(patch, encoding="utf-8")
+    print(render_console(result, limit=args.limit, min_severity=Severity.parse(args.min_severity)))
+    cost = report.cost_usd()
+    print(f"\nAgent: {sum(v.verdict == 'confirmed' for v in report.verdicts.values())} confirmed, "
+          f"{sum(v.verdict == 'false_positive' for v in report.verdicts.values())} false positives, "
+          f"{sum(v.verdict == 'uncertain' for v in report.verdicts.values())} uncertain · {report.turns} turns"
+          + (f" · ≈ ${cost}" if cost is not None else "") + f" · stop: {report.stop}")
+    print(f"Report: {args.report}" + (f" · fixes: {args.patch} ({len(report.fixes)})" if report.fixes else ""))
+    if report.summary:
+        print("\n" + report.summary)
+    if args.apply and report.fixes:
+        changed = apply_fixes(report, root)
+        print(f"Applied fixes to: {', '.join(changed)}. Review with `git diff` before committing.")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from rempart.mcp_server import serve
+
+    return serve()
 
 
 def cmd_triage(args: argparse.Namespace) -> int:
@@ -149,7 +286,7 @@ def cmd_learn(args: argparse.Namespace) -> int:
     print(f"{'rule':<34} {'TP':>4} {'FP':>4} {'acc':>4}  prior  learned")
     for rid, s in sorted(stats.items(), key=lambda kv: kv[1].precision()):
         prior = rules[rid].confidence if rid in rules else 0.8
-        print(f"{rid:<34} {s.tp:>4} {s.fp:>4} {s.accepted:>4}  {prior:>5.0%}  {s.precision(prior):>6.0%}")
+        print(f"{rid:<34} {s.tp:>4g} {s.fp:>4g} {s.accepted:>4g}  {prior:>5.0%}  {s.precision(prior):>6.0%}")
     return 0
 
 
@@ -182,6 +319,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--only", help="comma-separated scanners to run")
     s.add_argument("--skip", help="comma-separated scanners to skip")
     s.add_argument("--offline", action="store_true", help="no network: skip OSV/KEV/EPSS lookups")
+    s.add_argument("--aws", nargs="?", const="default", metavar="PROFILE",
+                   help="also audit the live AWS account (read-only) and correlate it with the code")
+    s.add_argument("--image", action="append", metavar="REF", help="also scan this container image (repeatable)")
+    s.add_argument("--verify-secrets", action="store_true",
+                   help="check whether detected credentials are live by calling each provider's read-only identity endpoint (your own repositories only)")
     s.add_argument("--fail-on", choices=[x.name.lower() for x in Severity], help="exit 1 if a finding at or above this severity exists")
     s.add_argument("--min-severity", default="low", choices=[x.name.lower() for x in Severity])
     s.add_argument("--limit", type=int, default=60, help="max findings printed on the console")
@@ -213,6 +355,51 @@ def build_parser() -> argparse.ArgumentParser:
     h.set_defaults(func=cmd_history)
 
     sub.add_parser("learn", help="per-rule precision learned from your verdicts").set_defaults(func=cmd_learn)
+
+    def outputs(sp: argparse.ArgumentParser, min_sev: str = "low") -> None:
+        sp.add_argument("-f", "--format", choices=["console", "json", "sarif", "md", "markdown", "html"], default="console")
+        sp.add_argument("-o", "--output")
+        sp.add_argument("--fail-on", choices=[x.name.lower() for x in Severity])
+        sp.add_argument("--min-severity", default=min_sev, choices=[x.name.lower() for x in Severity])
+        sp.add_argument("--limit", type=int, default=60)
+        sp.add_argument("-v", "--verbose", action="store_true")
+
+    im = sub.add_parser("image", help="scan a container image from a registry or a docker-save/OCI tar (no Docker needed)")
+    im.add_argument("image", help="e.g. python:3.12-slim, ghcr.io/org/app@sha256:..., or ./image.tar")
+    im.add_argument("--platform", default="linux/amd64")
+    im.add_argument("--offline", action="store_true")
+    im.add_argument("--max-mb", type=int, default=3000, help="refuse images whose layers exceed this size")
+    outputs(im)
+    im.set_defaults(func=cmd_image)
+
+    cl = sub.add_parser("cloud", help="live read-only audit of a cloud account (AWS)")
+    cl.add_argument("provider", choices=["aws"])
+    cl.add_argument("--profile", help="AWS profile name (default: the standard credential chain)")
+    cl.add_argument("--regions", help="comma-separated regions (default: every enabled region)")
+    outputs(cl)
+    cl.set_defaults(func=cmd_cloud)
+
+    k8 = sub.add_parser("k8s", help="live audit of a Kubernetes cluster through kubectl (read-only, never reads Secrets)")
+    k8.add_argument("--context")
+    k8.add_argument("--include-system", action="store_true", help="also audit kube-system and other system namespaces")
+    outputs(k8)
+    k8.set_defaults(func=cmd_k8s)
+
+    ag = sub.add_parser("agent", help="AI verification: an LLM reads the code behind each finding, confirms or rejects it and proposes fixes")
+    ag.add_argument("path", nargs="?", default=".")
+    ag.add_argument("--model", default=None, help="model id (default: $REMPART_MODEL, else the newest Opus-tier model from the Anthropic Models API)")
+    ag.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
+    ag.add_argument("--max-findings", type=int, default=15)
+    ag.add_argument("--max-turns", type=int, default=40)
+    ag.add_argument("--min-severity", default="medium", choices=[x.name.lower() for x in Severity])
+    ag.add_argument("--offline", action="store_true")
+    ag.add_argument("--report", default="rempart-agent-report.md")
+    ag.add_argument("--patch", default="rempart-fixes.patch")
+    ag.add_argument("--apply", action="store_true", help="write the proposed fixes to the files (review with git diff)")
+    ag.add_argument("--limit", type=int, default=40)
+    ag.set_defaults(func=cmd_agent)
+
+    sub.add_parser("mcp", help="run as a Model Context Protocol server over stdio (for AI coding assistants: Cursor, VS Code, Windsurf…)").set_defaults(func=cmd_mcp)
 
     r = sub.add_parser("rules", help="list rules")
     r.add_argument("--domain")
