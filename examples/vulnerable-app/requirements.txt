@@ -1,0 +1,4 @@
+--extra-index-url https://pypi.internal.example.com/simple
+flask==2.0.0
+requests==2.19.0
+pyyaml

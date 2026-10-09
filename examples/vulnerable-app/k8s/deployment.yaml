@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      hostNetwork: true
+      containers:
+        - name: api
+          image: demo/api:latest
+          securityContext:
+            privileged: true

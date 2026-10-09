@@ -1,0 +1,15 @@
+on:
+  pull_request_target:
+  issues:
+    types: [opened]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: some-org/labeler@v2
+      - run: |
+          echo "New issue: ${{ github.event.issue.title }}"

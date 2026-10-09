@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rempart"
+version = "0.1.0"
+description = "Security, data and cloud posture scanner for your own code: SAST, secrets, dependencies (OSV + CISA KEV + EPSS), IaC, Kubernetes, CI/CD, data stores, AI agents, quality and performance."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Houssam Nadir" }]
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0"]
+keywords = ["security", "sast", "sca", "iac", "kubernetes", "devsecops", "owasp", "cloud-security", "data-security", "mcp"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Security",
+  "Environment :: Console",
+]
+
+[project.urls]
+Homepage = "https://github.com/Houssam2510/rempart"
+
+[project.scripts]
+rempart = "rempart.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

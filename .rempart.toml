@@ -1,0 +1,8 @@
+# Rempart scanning Rempart.
+# tests/ and examples/ hold intentionally vulnerable code: scanning them would only prove the tests work.
+exclude = ["tests/**", "examples/**"]
+
+[severity]
+# Scanner modules are flat rule tables (one `if` per check, no nesting). Cyclomatic
+# complexity counts each check as a branch, so keep it visible but low here.
+"QUAL-COMPLEXITY" = "low"

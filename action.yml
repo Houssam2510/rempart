@@ -1,0 +1,31 @@
+name: Rempart security scan
+description: Security, data and cloud posture scan (SAST, secrets, OSV/KEV/EPSS dependencies, IaC, Kubernetes, CI/CD, data, AI agents) with SARIF output.
+branding:
+  icon: shield
+  color: purple
+inputs:
+  path:
+    description: Directory to scan
+    default: "."
+  fail-on:
+    description: Fail the job at or above this severity (critical, high, medium, low, info). Empty to never fail.
+    default: "high"
+  sarif:
+    description: Where to write the SARIF report
+    default: "rempart.sarif"
+runs:
+  using: composite
+  steps:
+    - name: Install Rempart
+      shell: bash
+      run: pip install "${GITHUB_ACTION_PATH}"
+    - name: Scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        SARIF_OUT: ${{ inputs.sarif }}
+      run: |
+        args=(scan "$SCAN_PATH" --no-history --format sarif --output "$SARIF_OUT")
+        if [ -n "$FAIL_ON" ]; then args+=(--fail-on "$FAIL_ON"); fi
+        rempart "${args[@]}"

@@ -1,0 +1,10 @@
+services:
+  db:
+    image: mongo
+    command: mongod --bind_ip_all
+    ports:
+      - "27017:27017"
+  admin:
+    image: portainer/portainer-ce:2.21.0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
