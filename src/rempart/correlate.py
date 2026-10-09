@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from rempart.models import Finding, Severity
 from rempart.registry import A01, A02, A03, A05, A07, A08, I, rule
@@ -27,6 +27,10 @@ class Chain:
     stages: tuple[tuple[str, Callable[[Finding], bool]], ...]  # (stage label, predicate)
     break_first: str
     owasp: tuple[str, ...] = ()
+    # "graph": the pieces must be connected through infrastructure (same service, a
+    # Terraform reference, a compose dependency) to be a path; "repo": being in the
+    # same application is already the link (one front-end, one CI configuration).
+    scope: str = "graph"
 
 
 def ids(*rule_ids: str) -> Callable[[Finding], bool]:
@@ -58,7 +62,7 @@ CHAINS: tuple[Chain, ...] = (
           "A workflow runs attacker-controlled code or text with privileges, and the same repository holds publishing power (write token, OIDC, cache shared with a release job, or a stored publish token). This is the TanStack (May 2026) and Shai-Hulud pattern.",
           (("untrusted code or text executes", ids("GHA-PWN-REQUEST", "GHA-SCRIPT-INJECTION")),
            ("publishing power reachable", ids("GHA-WRITE-ALL", "GHA-OIDC-UNTRUSTED", "GHA-CACHE-IN-PRIVILEGED", "CI-LONG-LIVED-PUBLISH-TOKEN", "SEC-NPM-TOKEN", "SEC-PYPI-TOKEN", "SEC-GITHUB-TOKEN"))),
-          "Stop checking out PR code in pull_request_target workflows and pass event text through env variables; then move publishing to OIDC trusted publishing behind a protected environment.", (A08, A03)),
+          "Stop checking out PR code in pull_request_target workflows and pass event text through env variables; then move publishing to OIDC trusted publishing behind a protected environment.", (A08, A03), "repo"),
     Chain("CHAIN-RCE-TO-HOST", "Code execution would escape the container to the host", Severity.CRITICAL,
           "A remote-code-execution class weakness exists, and the workload runs privileged, mounts the Docker socket or host paths: a single exploit becomes root on the node and every container on it.",
           (("code execution", kev_or_rce), ("container isolation disabled", ids("K8S-PRIVILEGED", "K8S-HOSTPATH", "COMPOSE-DOCKER-SOCKET", "COMPOSE-PRIVILEGED", "K8S-HOST-NAMESPACE", "K8S-DANGEROUS-CAPS"))),
@@ -66,15 +70,15 @@ CHAINS: tuple[Chain, ...] = (
     Chain("CHAIN-BAAS-TABLE-PUBLIC", "Database table readable and writable by any visitor", Severity.CRITICAL,
           "Row-level security or Firebase rules are missing while the client ships the public key to every browser: anyone can query the table directly, bypassing the app.",
           (("access rules missing", ids("DATA-SUPABASE-RLS-MISSING", "DATA-FIREBASE-OPEN-RULES")), ("public client key in front-end", ids("CTX-BAAS-CLIENT"))),
-          "Enable RLS (or lock the Firebase rules) and add explicit per-user policies.", (A01,)),
+          "Enable RLS (or lock the Firebase rules) and add explicit per-user policies.", (A01,), "repo"),
     Chain("CHAIN-DEBUG-CONSOLE-EXPOSED", "Debug server reachable from the network", Severity.CRITICAL,
           "Debug mode is on and the server binds every interface: the Werkzeug/Django debug pages leak settings and, for Werkzeug, offer an interactive Python console.",
           (("debug on", ids("CODE-DEBUG-ENABLED")), ("listening on all interfaces", ids("CTX-BIND-ALL"))),
-          "Turn debug off outside local development.", (A02,)),
+          "Turn debug off outside local development.", (A02,), "repo"),
     Chain("CHAIN-XSS-SESSION-THEFT", "One XSS steals every user session", Severity.HIGH,
           "HTML is written to the DOM from dynamic data while session tokens live in localStorage, readable by any script on the page.",
           (("XSS sink", ids("CODE-XSS-SINK", "CODE-TEMPLATE-AUTOESCAPE-OFF", "AI-OUTPUT-TO-SINK")), ("token readable by scripts", ids("CODE-TOKEN-LOCALSTORAGE", "CODE-COOKIE-FLAGS", "WEB-COOKIE-FLAGS"))),
-          "Move tokens to HttpOnly cookies; sanitize the sink; deploy a nonce-based CSP.", (A05, A07)),
+          "Move tokens to HttpOnly cookies; sanitize the sink; deploy a nonce-based CSP.", (A05, A07), "repo"),
     Chain("CHAIN-ADMIN-CREDENTIALS-EXPOSED", "Credentials with full cloud admin can leak", Severity.CRITICAL,
           "An identity is granted every action on every resource, and a path exists to its credentials (static access key, secret in the repository, metadata endpoint, or OIDC on untrusted triggers).",
           (("full admin", ids("TF-IAM-WILDCARD", "TF-IAM-ADMIN-ATTACHED", "AWS-IAM-ADMIN-POLICY", "AWS-IAM-USER-ADMIN")),
@@ -83,7 +87,7 @@ CHAINS: tuple[Chain, ...] = (
     Chain("CHAIN-WORM-PROPAGATION", "Install-time code could republish your packages", Severity.CRITICAL,
           "Code that runs at install time (malicious dependency or remote install script) sits next to a publish token: this is how the Shai-Hulud worms spread from one maintainer to every package they owned.",
           (("install-time execution", ids("DEP-MALICIOUS", "SUPPLY-INSTALL-SCRIPT")), ("publish credential", ids("SEC-NPM-TOKEN", "SEC-PYPI-TOKEN", "SEC-NPMRC-TOKEN", "CI-LONG-LIVED-PUBLISH-TOKEN", "SEC-GITHUB-TOKEN"))),
-          "Remove the install-time execution and rotate every token on machines that installed it; switch to trusted publishing.", (A03, A08)),
+          "Remove the install-time execution and rotate every token on machines that installed it; switch to trusted publishing.", (A03, A08), "repo"),
 )
 
 R_CHAIN = {c.rule_id: rule(c.rule_id, c.title, c.severity, "attack-path", owasp=c.owasp,
@@ -111,7 +115,27 @@ def context_signals(files: Iterable[str], read: Callable[[str], str | None]) -> 
     return out
 
 
-def correlate(findings: list[Finding], context: list[Finding] | None = None) -> list[Finding]:
+def _linked_pair(graph: Any, links: list[tuple[str, list[Finding]]]) -> tuple[list[Finding], list[list[str]]] | None:
+    """Pick one finding per stage so that consecutive stages are connected in the resource graph."""
+    def walk(stage: int, chosen: list[Finding], paths: list[list[str]]) -> tuple[list[Finding], list[list[str]]] | None:
+        if stage == len(links):
+            return chosen, paths
+        for f in sorted(links[stage][1], key=lambda x: -x.risk)[:40]:
+            if chosen:
+                p = graph.link(chosen[-1], f)
+                if p is None:
+                    continue
+                found = walk(stage + 1, chosen + [f], paths + [p])
+            else:
+                found = walk(stage + 1, [f], paths)
+            if found:
+                return found
+        return None
+
+    return walk(0, [], [])
+
+
+def correlate(findings: list[Finding], context: list[Finding] | None = None, graph: Any = None) -> list[Finding]:
     pool = list(findings) + list(context or [])
     chains: list[Finding] = []
     for chain in CHAINS:
@@ -122,17 +146,32 @@ def correlate(findings: list[Finding], context: list[Finding] | None = None) -> 
                 break
             links.append((label, matched))
         else:
+            linked = _linked_pair(graph, links) if graph is not None and chain.scope == "graph" else None
             parts = []
             members: list[str] = []
-            for label, matched in links:
-                best = sorted(matched, key=lambda f: -f.risk)[0]
+            for idx, (label, matched) in enumerate(links):
+                best = linked[0][idx] if linked else sorted(matched, key=lambda f: -f.risk)[0]
                 where = f"{best.path}:{best.line}" if best.line else best.path
-                more = f" (+{len(matched) - 1} more)" if len(matched) > 1 else ""
+                more = f" (+{len(matched) - 1} more)" if len(matched) > 1 and not linked else ""
                 parts.append(f"{label}: {best.rule.id} at {where}{more}")
-                members += [f.fingerprint for f in matched if not f.rule.id.startswith("CTX-")]
-            first = links[0][1][0]
-            f = Finding(R_CHAIN[chain.rule_id], first.path, first.line, chain.narrative + " Links → " + " | ".join(parts),
+                members += [f.fingerprint for f in ([best] if linked else matched) if not f.rule.id.startswith("CTX-")]
+            first = linked[0][0] if linked else links[0][1][0]
+            narrative = chain.narrative
+            if linked:
+                route = " ; ".join(graph.describe(p) for p in linked[1])
+                narrative += f" Connected through: {route}."
+            elif graph is not None and chain.scope == "graph":
+                narrative = "Both pieces are in this project but no infrastructure link between them was found, so this is a co-occurrence to check, not a proven path. " + narrative
+            f = Finding(R_CHAIN[chain.rule_id], first.path, first.line, narrative + " Links → " + " | ".join(parts),
                         snippet=chain.title, extra={"anchor": chain.rule_id + ":" + ",".join(sorted(set(members))[:6]), "members": members})
-            f.verification = "correlated"
+            if linked:
+                f.verification = "linked"
+                f.extra["route"] = [graph.describe(p) for p in linked[1]]
+            elif graph is not None and chain.scope == "graph":
+                f.verification = "co-occurrence"
+                f.severity = Severity(max(Severity.MEDIUM, chain.severity - 1))
+                f.confidence = 0.5
+            else:
+                f.verification = "correlated"
             chains.append(f)
     return chains

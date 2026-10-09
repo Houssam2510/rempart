@@ -10,7 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Iterator, Protocol
+from typing import Any, Iterable, Iterator, Protocol
 
 from rempart.config import Config
 from rempart.models import DOMAINS, Finding, Rule, Severity
@@ -160,13 +160,14 @@ class ScanResult:
     suppressed: int = 0
     errors: list[str] = field(default_factory=list)
     context: list[Finding] = field(default_factory=list)
+    graph: Any = None  # rempart.graph.ResourceGraph, when the scan read the repository
 
     def add_attack_paths(self) -> None:
         """Correlate the (already triaged) findings into attack chains."""
         from rempart.correlate import correlate
 
         self.findings = [f for f in self.findings if f.rule.domain != "attack-path"]
-        self.findings += correlate(self.findings, self.context)
+        self.findings += correlate(self.findings, self.context, self.graph)
         self.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
 
     def counts(self) -> dict[str, int]:
@@ -244,6 +245,7 @@ def run_scan(
             findings.append(f)
     findings.sort(key=lambda f: (-f.risk, f.path, f.line))
     from rempart.correlate import context_signals
+    from rempart.graph import build_graph
 
     result = ScanResult(
         root=str(root),
@@ -254,6 +256,7 @@ def run_scan(
         suppressed=suppressed,
         errors=errors,
         context=context_signals(files, ctx.text),
+        graph=build_graph(files, ctx.text),
     )
     if correlate:
         result.add_attack_paths()
