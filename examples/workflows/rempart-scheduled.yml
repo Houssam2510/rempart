@@ -1,0 +1,53 @@
+# Copy to .github/workflows/rempart.yml in the repository to monitor.
+# - every pull request: only what the change adds (baseline = target branch)
+# - every night: full scan with fresh OSV/KEV/EPSS data and git-history secrets,
+#   results in the Security tab (code scanning) so new CVEs on old code show up
+name: rempart
+
+on:
+  pull_request:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "rempart @ git+https://github.com/Houssam2510/rempart"
+      - name: New findings only
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: rempart scan . --no-history --baseline "origin/${BASE_REF}" --fail-on high
+
+  nightly:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "rempart @ git+https://github.com/Houssam2510/rempart"
+      - run: rempart scan . --no-history --git-history --format sarif --output rempart.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: rempart.sarif
+          category: rempart

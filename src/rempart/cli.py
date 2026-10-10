@@ -68,6 +68,30 @@ def cmd_scan(args: argparse.Namespace) -> int:
             result.scanners.append(f"image:{image}")
         except Exception as exc:  # registry/network/archive errors
             result.errors.append(f"image {image}: {exc}")
+    if args.git_history:
+        from rempart.continuous import scan_git_history
+
+        def current(rel: str) -> str | None:
+            try:
+                return (root / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return None
+
+        result.findings += list(scan_git_history(root, current, verify_secrets=args.verify_secrets))
+        result.scanners.append("git-history")
+    if args.baseline:
+        from rempart.continuous import baseline_fingerprints
+
+        scanners = [ALL_SCANNERS[n] for n in names]
+        try:
+            known = baseline_fingerprints(root, args.baseline, lambda p: run_scan(p, scanners, config, offline=args.offline, correlate=False).findings)
+        except Exception as exc:  # unknown ref, not a git repository
+            print(f"rempart: cannot scan baseline {args.baseline!r}: {exc}", file=sys.stderr)
+            return 2
+        inherited = [f for f in result.findings if f.fingerprint in known]
+        result.findings = [f for f in result.findings if f.fingerprint not in known]
+        result.suppressed += len(inherited)
+        print(f"rempart: {len(inherited)} finding(s) already present at {args.baseline} hidden; showing what this change adds.", file=sys.stderr)
     result.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
 
     diff = None
@@ -178,6 +202,24 @@ def cmd_k8s(args: argparse.Namespace) -> int:
         print(f"rempart: {exc}", file=sys.stderr)
         return 2
     return _render(findings, f"k8s:{args.context or 'current-context'}", args, scanners=("kubernetes",))
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    from rempart.continuous import watch
+    from rempart.scanners import ALL_SCANNERS
+
+    root = Path(args.path).resolve()
+    config = Config.load(root)
+    names = list(ALL_SCANNERS)
+    if args.only:
+        names = [n.strip() for n in args.only.split(",")]
+    scanners = [ALL_SCANNERS[n] for n in names]
+    try:
+        watch(root, lambda p: run_scan(p, scanners, config, offline=not args.with_network).findings,
+              interval=args.interval, min_severity=Severity.parse(args.min_severity))
+    except KeyboardInterrupt:
+        pass
+    return 0
 
 
 def cmd_agent_eval(args: argparse.Namespace) -> int:
@@ -348,6 +390,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--aws", nargs="?", const="default", metavar="PROFILE",
                    help="also audit the live AWS account (read-only) and correlate it with the code")
     s.add_argument("--image", action="append", metavar="REF", help="also scan this container image (repeatable)")
+    s.add_argument("--git-history", action="store_true", help="also look for secrets removed from the files but still in past commits")
+    s.add_argument("--baseline", metavar="REF", help="only report findings that are not already present at this git revision (e.g. origin/main)")
     s.add_argument("--prod-only", action="store_true", help="ignore dependencies only used to build or test (devDependencies, dev groups)")
     s.add_argument("--verify-secrets", action="store_true",
                    help="check whether detected credentials are live by calling each provider's read-only identity endpoint (your own repositories only)")
@@ -426,6 +470,14 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--apply", action="store_true", help="write the proposed fixes to the files (review with git diff)")
     ag.add_argument("--limit", type=int, default=40)
     ag.set_defaults(func=cmd_agent)
+
+    wt = sub.add_parser("watch", help="re-scan whenever the repository changes and print only what got better or worse")
+    wt.add_argument("path", nargs="?", default=".")
+    wt.add_argument("--interval", type=float, default=20.0, help="seconds between change checks")
+    wt.add_argument("--min-severity", default="medium", choices=[x.name.lower() for x in Severity])
+    wt.add_argument("--only", help="comma-separated scanners to run")
+    wt.add_argument("--with-network", action="store_true", help="also query OSV/KEV/EPSS on each change (slower)")
+    wt.set_defaults(func=cmd_watch)
 
     ev = sub.add_parser("agent-eval", help="measure the AI verification agent on labelled cases (needs ANTHROPIC_API_KEY)")
     ev.add_argument("--corpus", help="JSON file of labelled cases (default: the bundled corpus)")
