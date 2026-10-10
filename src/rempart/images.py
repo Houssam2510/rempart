@@ -211,6 +211,14 @@ class ImageFS:
                     for k in [k for k in self.files if k == target or k.startswith(target + "/")]:
                         del self.files[k]
                     continue
+                if member.isfile() and not _SKIP_DIRS.match(path) and member.size <= MAX_ARTIFACT:
+                    special = _special_artifact(path, member, tar)
+                    if special is not None:
+                        if special:
+                            self.files[path + SYNTH] = special
+                        else:
+                            self.files.pop(path + SYNTH, None)
+                        continue
                 if not member.isfile() or member.size > MAX_FILE or _SKIP_DIRS.match(path) or not _INTERESTING.match(path):
                     continue
                 f = tar.extractfile(member)
@@ -219,6 +227,129 @@ class ImageFS:
 
     def text(self, path: str) -> str:
         return self.files.get(path, b"").decode("utf-8", "replace")
+
+
+SYNTH = "#packages"  # synthetic file: package list extracted from a binary artifact
+MAX_ARTIFACT = 200_000_000
+_GO_MAGIC = b"\xff Go buildinf:"
+_GO_DEP = re.compile(rb"(?m)^(mod|dep|=>)\t([^\t\n]+)\t(v[^\t\n]+)")
+
+
+def _special_artifact(path: str, member: tarfile.TarInfo, tar: tarfile.TarFile) -> bytes | None:
+    """Binary artifacts too large to keep: read once, keep only their package list.
+    Returns None when the file is not one of them, b"" when it is but holds nothing."""
+    base = os.path.basename(path)
+    if path.startswith("var/lib/rpm/") and base == "rpmdb.sqlite":
+        data = _read(tar, member)
+        return "\n".join(f"rpm\t{n}\t{v}" for n, v in rpm_sqlite_packages(data)).encode() if data else b""
+    if base.endswith((".jar", ".war", ".ear")):
+        data = _read(tar, member)
+        return "\n".join(f"maven\t{n}\t{v}" for n, v in jar_packages(data)).encode() if data else b""
+    if member.mode & 0o111 and member.size > 300_000 and not base.endswith((".so", ".a")) and ".so." not in base \
+            and not path.startswith(("usr/lib/", "lib/", "usr/libexec/", "usr/share/")):
+        data = _read(tar, member)
+        if data and _GO_MAGIC in data:
+            return "\n".join(f"go\t{n}\t{v}" for n, v in go_buildinfo(data)).encode()
+        return None
+    return None
+
+
+def _read(tar: tarfile.TarFile, member: tarfile.TarInfo) -> bytes:
+    f = tar.extractfile(member)
+    return f.read() if f is not None else b""
+
+
+def go_buildinfo(data: bytes) -> list[tuple[str, str]]:
+    """Modules compiled into a Go binary (the text `go version -m` prints), plus the toolchain as `stdlib`."""
+    out: list[tuple[str, str]] = []
+    i = data.find(_GO_MAGIC)
+    if i >= 0 and len(data) > i + 33 and data[i + 15] & 0x2:
+        n, shift, pos = 0, 0, i + 32
+        while pos < len(data):
+            b = data[pos]
+            n |= (b & 0x7F) << shift
+            pos += 1
+            shift += 7
+            if not b & 0x80:
+                break
+        version = data[pos:pos + n].decode("ascii", "replace")
+        if re.fullmatch(r"go1\.\d+(?:\.\d+)?", version):
+            out.append(("stdlib", "v" + version[2:]))
+    replaced: dict[str, tuple[str, str]] = {}
+    last = ""
+    for kind, mod, ver in _GO_DEP.findall(data):
+        name, version = mod.decode("utf-8", "replace"), ver.decode("utf-8", "replace")
+        if kind == b"=>" and last:
+            replaced[last] = (name, version)
+        else:
+            last = name
+            if kind == b"dep":
+                out.append((name, version))
+    return [replaced.get(n, (n, v)) for n, v in out]
+
+
+def jar_packages(data: bytes, depth: int = 0) -> list[tuple[str, str]]:
+    """Maven coordinates from pom.properties, including jars nested in Spring Boot / WAR archives."""
+    import io
+    import zipfile
+
+    out: list[tuple[str, str]] = []
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, ValueError, OSError):
+        return out
+    with zf:
+        for info in zf.infolist():
+            name = info.filename
+            if name.startswith("META-INF/maven/") and name.endswith("/pom.properties") and info.file_size < 100_000:
+                props = dict(re.findall(r"(?m)^\s*(groupId|artifactId|version)\s*=\s*(\S+)", zf.read(info).decode("utf-8", "replace")))
+                if {"groupId", "artifactId", "version"} <= props.keys():
+                    out.append((f"{props['groupId']}:{props['artifactId']}", props["version"]))
+            elif depth == 0 and name.endswith(".jar") and info.file_size < 60_000_000:
+                out += jar_packages(zf.read(info), depth + 1)
+    return out
+
+
+def rpm_sqlite_packages(data: bytes) -> list[tuple[str, str]]:
+    """(source package, [epoch:]version-release) from an rpmdb.sqlite (Fedora 33+, RHEL/Rocky/Alma 9, Amazon Linux 2023)."""
+    import sqlite3
+    import struct
+    import tempfile
+
+    out: list[tuple[str, str]] = []
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
+        tmp.write(data)
+        tmp.flush()
+        try:
+            con = sqlite3.connect(f"file:{tmp.name}?mode=ro", uri=True)
+            rows = con.execute("SELECT blob FROM Packages").fetchall()
+            con.close()
+        except sqlite3.Error:
+            return out
+    for (blob,) in rows:
+        try:
+            il, dl = struct.unpack(">ii", blob[:8])
+            store = 8 + 16 * il
+            tags: dict[int, object] = {}
+            for k in range(il):
+                tag, typ, off, cnt = struct.unpack(">iiii", blob[8 + 16 * k: 24 + 16 * k])
+                if tag in (1000, 1001, 1002, 1044) and typ == 6:
+                    end = blob.index(b"\0", store + off)
+                    tags[tag] = blob[store + off:end].decode("utf-8", "replace")
+                elif tag == 1003 and typ == 4:
+                    tags[tag] = struct.unpack(">i", blob[store + off: store + off + 4])[0]
+        except (struct.error, ValueError):
+            continue
+        if 1000 in tags and 1001 in tags and tags[1000] != "gpg-pubkey":
+            ver = f"{tags[1001]}-{tags.get(1002, '')}".rstrip("-")
+            if tags.get(1003):
+                ver = f"{tags[1003]}:{ver}"
+            # advisories name the source package (openssl), not the binary one (openssl-libs)
+            src = re.match(r"(.+)-[^-]+-[^-]+\.(?:no)?src\.rpm$", str(tags.get(1044, "")))
+            name = src.group(1) if src else str(tags[1000])
+            if (name, ver) not in out:
+                out.append((name, ver))
+    return out
 
 
 def pull(ref: ImageRef, platform: str = "linux/amd64", max_bytes: int = 3_000_000_000) -> tuple[dict, ImageFS]:
@@ -287,6 +418,10 @@ def osv_ecosystem(osr: dict[str, str]) -> str | None:
         return f"Ubuntu:{ver}:LTS" if ver.split(".")[0].isdigit() and int(ver.split(".")[0]) % 2 == 0 and ver.endswith(".04") else f"Ubuntu:{ver}"
     if distro == "alpine" and ver:
         return "Alpine:v" + ".".join(ver.split(".")[:2])
+    if distro == "rocky" and ver:
+        return f"Rocky Linux:{ver.split('.')[0]}"
+    if distro == "almalinux" and ver:
+        return f"AlmaLinux:{ver.split('.')[0]}"
     return None
 
 
@@ -315,6 +450,10 @@ def os_packages(fs: ImageFS, label: str, eco: str | None) -> list[Package]:
                 name = m.group(1) if m else rec["Package"]
                 version = (m.group(2) if m and m.group(2) else rec["Version"])
                 pkgs.setdefault((name, version), Package(eco, name, version, f"{label} [{path}]", 0))
+    elif eco.startswith(("Rocky Linux", "AlmaLinux")):
+        for line in fs.text("var/lib/rpm/rpmdb.sqlite" + SYNTH).splitlines():
+            _, name, version = line.split("\t")
+            pkgs.setdefault((name, version), Package(eco, name, version, f"{label} [var/lib/rpm]", 0))
     elif eco.startswith("Alpine"):
         for block in fs.text("lib/apk/db/installed").split("\n\n"):
             fields = dict(line.split(":", 1) for line in block.splitlines() if len(line) > 2 and line[1] == ":")
@@ -340,6 +479,12 @@ def language_packages(fs: ImageFS, label: str) -> list[Package]:
                 continue
             if isinstance(meta, dict) and meta.get("name") and meta.get("version"):
                 pkgs.setdefault(("npm", meta["name"], meta["version"]), Package("npm", meta["name"], meta["version"], f"{label} [{path}]", 0))
+        elif path.endswith(SYNTH):
+            for line in data.decode("utf-8", "replace").splitlines():
+                kind, name, version = (line.split("\t") + ["", "", ""])[:3]
+                eco = {"go": "Go", "maven": "Maven"}.get(kind)
+                if eco and name and version:
+                    pkgs.setdefault((eco, name, version), Package(eco, name, version, f"{label} [{path[:-len(SYNTH)]}]", 0))
         else:
             parser = parser_for(os.path.basename(path))
             if parser is not None and not path.startswith("usr/"):
@@ -432,8 +577,9 @@ def analyze(config: dict, fs: ImageFS, label: str, *, offline: bool = False, tod
         age = None
     if age is not None and age > 365 and not created.startswith("1970"):
         F(R_IMG_STALE, f"Built {age} days ago ({created}).", snippet=created)
-    if any(p.startswith("var/lib/rpm/") for p in fs.files):
-        F(R_IMG_UNSUPPORTED, "RPM-based image: OS packages are not analysed yet.", snippet="rpm")
+    if any(p.startswith("var/lib/rpm/") for p in fs.files) and not (eco or "").startswith(("Rocky Linux", "AlmaLinux")):
+        F(R_IMG_UNSUPPORTED, f"RPM-based image ({distro} {ver}): OS packages are listed but OSV has no advisories feed for it; "
+                             "language packages and Go/Java binaries are still checked.", snippet="rpm")
     if fs.skipped_layers:
         F(R_IMG_UNSUPPORTED, f"{len(fs.skipped_layers)} zstd layer(s) skipped: needs Python 3.14+.", snippet="zstd")
 

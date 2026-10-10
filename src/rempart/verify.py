@@ -47,9 +47,13 @@ class Verdict:
     detail: str = ""
 
 
-def _bearer(url: str, token: str, identity: Callable[[dict], str] = lambda d: "", header: str = "Authorization", prefix: str = "Bearer ") -> Callable[[Http], Verdict]:
+def _bearer(url: str, token: str, identity: Callable[[dict], str] = lambda d: "", header: str = "Authorization", prefix: str = "Bearer ",
+            extra: dict[str, str] | None = None) -> Callable[[Http], Verdict]:
     def run(http: Http) -> Verdict:
-        req = urllib.request.Request(url, headers={header: prefix + token, "Accept": "application/json"})
+        headers = {"Accept": "application/json", **(extra or {})}
+        if token:
+            headers[header] = prefix + token
+        req = urllib.request.Request(url, headers=headers)
         status, body = http(req)
         if status in (200, 403):  # 403: valid key without this scope, still live
             try:
@@ -143,6 +147,17 @@ def checker(rule_id: str, token: str, file_text: str) -> Callable[[Http], Verdic
         "SEC-SENDGRID-KEY": lambda: _bearer("https://api.sendgrid.com/v3/scopes", token, lambda d: f"{len(d.get('scopes', []))} scopes"),
         "SEC-DIGITALOCEAN-TOKEN": lambda: _bearer("https://api.digitalocean.com/v2/account", token, lambda d: f"account {(d.get('account') or {}).get('email', '?')}"),
         "SEC-RESEND-KEY": lambda: _bearer("https://api.resend.com/domains", token, lambda d: "Resend key accepted"),
+        "SEC-LINEAR-KEY": lambda: _bearer("https://api.linear.app/graphql?query=%7Bviewer%7Bemail%7D%7D", token, lambda d: "Linear key accepted", prefix=""),
+        "SEC-NOTION-TOKEN": lambda: _bearer("https://api.notion.com/v1/users/me", token, lambda d: f"Notion bot {d.get('name', '?')}", extra={"Notion-Version": "2022-06-28"}),
+        "SEC-SENTRY-TOKEN": lambda: _bearer("https://sentry.io/api/0/", token, lambda d: "Sentry token accepted"),
+        "SEC-AIRTABLE-PAT": lambda: _bearer("https://api.airtable.com/v0/meta/whoami", token, lambda d: f"Airtable user {d.get('email', d.get('id', '?'))}"),
+        "SEC-FIGMA-TOKEN": lambda: _bearer("https://api.figma.com/v1/me", token, lambda d: f"Figma user {d.get('email', '?')}", header="X-Figma-Token", prefix=""),
+        "SEC-GROQ-KEY": lambda: _bearer("https://api.groq.com/openai/v1/models", token, lambda d: "Groq key accepted"),
+        "SEC-REPLICATE-TOKEN": lambda: _bearer("https://api.replicate.com/v1/account", token, lambda d: f"Replicate account {d.get('username', '?')}"),
+        "SEC-POSTMAN-KEY": lambda: _bearer("https://api.getpostman.com/me", token, lambda d: f"Postman user {(d.get('user') or {}).get('username', '?')}", header="X-Api-Key", prefix=""),
+        "SEC-TELEGRAM-BOT": lambda: _bearer(f"https://api.telegram.org/bot{token}/getMe", "", lambda d: f"Telegram bot @{(d.get('result') or {}).get('username', '?')}"),
+        "SEC-MAPBOX-SECRET": lambda: _bearer(f"https://api.mapbox.com/tokens/v2?access_token={token}", "", lambda d: f"Mapbox token {d.get('code', '?')}"),
+        "SEC-NEWRELIC-KEY": lambda: _bearer("https://api.newrelic.com/v2/users.json", token, lambda d: "New Relic key accepted", header="Api-Key", prefix=""),
     }
     make = table.get(rule_id)
     return make() if make else None

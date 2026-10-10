@@ -181,6 +181,16 @@ def cmd_image(args: argparse.Namespace) -> int:
 
 
 def cmd_cloud(args: argparse.Namespace) -> int:
+    if args.provider in ("gcp", "azure"):
+        from rempart.cloud_multi import audit_azure, audit_gcp
+
+        try:
+            findings = list(audit_gcp(args.project) if args.provider == "gcp" else audit_azure(args.subscription))
+        except Exception as exc:  # CLI missing, not logged in
+            print(f"rempart: {args.provider} audit failed: {exc}", file=sys.stderr)
+            return 2
+        scope = findings[0].path.split("/")[2] if findings else (args.project or args.subscription or "?")
+        return _render(findings, f"{args.provider}:{scope}", args, f"{args.provider} {scope} · read-only via the official CLI", scanners=("cloud",))
     from rempart.cloud_aws import audit
 
     regions = [r.strip() for r in args.regions.split(",")] if args.regions else None
@@ -444,7 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
     im.set_defaults(func=cmd_image)
 
     cl = sub.add_parser("cloud", help="live read-only audit of a cloud account (AWS)")
-    cl.add_argument("provider", choices=["aws"])
+    cl.add_argument("provider", choices=["aws", "gcp", "azure"])
+    cl.add_argument("--project", help="GCP project id (default: gcloud's configured project)")
+    cl.add_argument("--subscription", help="Azure subscription id or name (default: az's current subscription)")
     cl.add_argument("--profile", help="AWS profile name (default: the standard credential chain)")
     cl.add_argument("--regions", help="comma-separated regions (default: every enabled region)")
     outputs(cl)
