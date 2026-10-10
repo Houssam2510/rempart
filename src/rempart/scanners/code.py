@@ -323,6 +323,100 @@ _JS_TAINT_SINKS = [
 ]
 
 
+# Call openings whose argument (or right-hand side) is the dangerous input, for function summaries.
+_JS_PARAM_SINKS = [
+    (R_CMD_INJ, re.compile(r"(?:(?<![\w.])|child_process\.|\bcp\.)(?:exec|execSync)\s*\("), "a shell command"),
+    (R_CODE_INJ, re.compile(r"(?<![\w.])(?:eval|new\s+Function|Function)\s*\("), "eval()"),
+    (R_SQLI, re.compile(r"(?:\.query|\.execute|\.raw|\$queryRawUnsafe|\$executeRawUnsafe|knex\.raw|sql\.unsafe)\s*\("), "a raw SQL query"),
+    (R_SSRF, re.compile(r"\b(?:fetch|axios(?:\.(?:get|post|put|request))?|got|https?\.(?:get|request))\s*\("), "an outgoing HTTP request"),
+    (R_PATH, re.compile(r"\b(?:readFile(?:Sync)?|createReadStream|sendFile|unlink(?:Sync)?|writeFile(?:Sync)?|readdir(?:Sync)?)\s*\("), "a file-system call"),
+    (R_XSS, re.compile(r"\.(?:innerHTML|outerHTML)\s*\+?=(?!=)\s*"), "innerHTML"),
+]
+_JS_FUNC_DEF = re.compile(r"(?:\bfunction\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)"
+                          r"|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\s*)?\(([^)]*)\)\s*(?::\s*[^={]+)?(?:=>)?)\s*\{")
+_JS_CLEANERS = re.compile(r"DOMPurify|sanitize|escape|encodeURIComponent|parseInt|parseFloat|Number\(|basename\(|shellescape|shell-quote|quote\(")
+
+
+def _js_block(text: str, open_brace: int) -> str:
+    """Text between `{` at open_brace and its matching `}` (strings and templates skipped)."""
+    depth, k, quote = 0, open_brace, ""
+    while k < len(text):
+        ch = text[k]
+        if quote:
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'`":
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace + 1:k]
+        k += 1
+    return text[open_brace + 1:]
+
+
+def _js_call_args(text: str, open_paren: int) -> list[str]:
+    """Top-level arguments of the call whose `(` is at open_paren."""
+    args, depth, k, quote, start = [], 0, open_paren, "", open_paren + 1
+    while k < len(text) and k - open_paren < 4000:
+        ch = text[k]
+        if quote:
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append(text[start:k])
+                return [a.strip() for a in args if a.strip()]
+        elif ch == "," and depth == 1:
+            args.append(text[start:k])
+            start = k + 1
+        k += 1
+    return []
+
+
+def js_function_summaries(text: str) -> dict[str, list[tuple[Rule, int, int, str]]]:
+    """{function name: [(rule, parameter index, sink line, sink label)]} for functions in one file."""
+    out: dict[str, list[tuple[Rule, int, int, str]]] = {}
+    for m in _JS_FUNC_DEF.finditer(text):
+        name = m.group(1) or m.group(3)
+        raw = m.group(2) if m.group(1) else m.group(4)
+        params = []
+        for part in (raw or "").split(","):
+            p = part.split("=")[0].split(":")[0].strip().lstrip(".")
+            params.append(p if re.fullmatch(r"[A-Za-z_$][\w$]*", p) else "")
+        if not any(params):
+            continue
+        body_start = m.end() - 1
+        body = _js_block(text, body_start)
+        for r, opener, label in _JS_PARAM_SINKS:
+            for sm in opener.finditer(body):
+                if r is R_XSS:
+                    expr = _js_expression(body, sm.end())
+                else:
+                    args = _js_call_args(body, sm.end() - 1)
+                    expr = args[0] if args else ""
+                if not expr or _JS_CLEANERS.search(expr):
+                    continue
+                for i, p in enumerate(params):
+                    if p and re.search(rf"(?<![\w$.]){re.escape(p)}(?![\w$])", expr):
+                        line = text.count("\n", 0, body_start + 1 + sm.start()) + 1
+                        out.setdefault(name, []).append((r, i, line, label))
+    return out
+
+
 def _js_expression(text: str, start: int) -> str:
     """Return the JS expression starting at `start` up to the end of the statement.
     A stack keeps template literals, `${}` holes and brackets apart, so multi-line
@@ -463,6 +557,7 @@ class CodeScanner:
         uses_math_rand = '"math/rand' in text
         applicable = [r for r in applicable if not (r.file_unless and r.file_unless.search(text))]
         all_lines = text.splitlines()
+        js_names: dict[str, int] | None = None
         for i, line in enumerate(all_lines, 1):
             if len(line) > 1500 or is_comment(line):
                 continue
@@ -481,6 +576,19 @@ class CodeScanner:
                 if r.rule is R_COOKIE and not _SESSION_CTX.search("\n".join(all_lines[max(0, i - 8): i + 3])):
                     continue
                 if r.rule in (R_CMD_INJ, R_SHELL_TRUE) and lower.endswith(JS) and not _JS_EXEC_IMPORT.search(text):
+                    continue
+                if r.rule is R_CMD_INJ and lower.endswith(JS):
+                    # request data on the line (directly or through a tracked variable) is an injection;
+                    # anything else is an interpolated command to review, as for Python
+                    if js_names is None:
+                        js_names = js_tracked_names(text)[0]
+                    direct = _JS_SOURCE.search(line) or any(re.search(rf"(?<![\w$.]){re.escape(n)}(?![\w$])", line) and taint_reaches(n, js_names[n], i)
+                                                            for n in js_names)
+                    if not direct:
+                        yield Finding(r.rule, rel, i, "Shell command built by interpolation; request data was not traced to it.",
+                                      snippet=line.strip()[:240], severity=Severity.MEDIUM, confidence=0.5)
+                        continue
+                    yield Finding(r.rule, rel, i, "Shell command built from request data.", snippet=line.strip()[:240])
                     continue
                 yield Finding(r.rule, rel, i, r.message, snippet=line.strip()[:240])
 
@@ -578,8 +686,39 @@ class CodeScanner:
                 f.confidence = 0.5
                 yield f
 
+    def _js_calls(self, rel: str, text: str, tainted: dict[str, int]) -> Iterator[Finding]:
+        """Request data handed to a function of this file whose parameter reaches a sink."""
+        summaries = js_function_summaries(text)
+        if not summaries:
+            return
+        has_exec = bool(_JS_EXEC_IMPORT.search(text))
+        lines = text.splitlines()
+        seen: set[tuple[str, int]] = set()
+        for fname, sinks in summaries.items():
+            for cm in re.finditer(rf"(?<![\w$.]){re.escape(fname)}\s*\(", text):
+                before = text[max(0, cm.start() - 40):cm.start()]
+                if re.search(r"function\s*$|(?:const|let|var)\s*$", before):
+                    continue
+                args = _js_call_args(text, cm.end() - 1)
+                ln = text.count("\n", 0, cm.start()) + 1
+                for r, idx, sink_line, label in sinks:
+                    if idx >= len(args) or (r is R_CMD_INJ and not has_exec):
+                        continue
+                    arg = args[idx]
+                    names = [n for n in tainted if re.search(rf"(?<![\w$.]){re.escape(n)}(?![\w$])", arg) and taint_reaches(n, tainted[n], ln)]
+                    if not (_JS_SOURCE.search(arg) or names) or _JS_CLEANERS.search(arg):
+                        continue
+                    if (r.id, ln) in seen:
+                        continue
+                    seen.add((r.id, ln))
+                    f = Finding(r, rel, ln, f"{fname}() receives request data and passes it to {label} on line {sink_line}.",
+                                snippet=(lines[ln - 1] if ln <= len(lines) else "").strip()[:240], severity=max(r.severity, Severity.HIGH), confidence=0.85)
+                    f.extra["dataflow"] = {"function": fname, "argument": idx, "sink_line": sink_line}
+                    yield f
+
     def _js_taint(self, rel: str, text: str) -> Iterator[Finding]:
         tainted, dynamic = js_tracked_names(text)
+        yield from self._js_calls(rel, text, tainted)
         if not tainted and not dynamic:
             return
         pools = {"taint": tainted, "dyn": {**dynamic, **{k: v for k, v in tainted.items()}}, "any": {**dynamic, **tainted}}

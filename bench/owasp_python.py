@@ -69,8 +69,7 @@ def main(root: str) -> dict[str, dict[str, float]]:
         fpr = s["fp"] / max(1, s["fp"] + s["tn"])
         report[cat] = {"tpr": round(100 * tpr, 1), "fpr": round(100 * fpr, 1), "score": round(100 * (tpr - fpr), 1), **s}
     overall = sum(r["score"] for r in report.values()) / len(report)
-    supported = [r["score"] for c, r in report.items() if not CATEGORY_RULES[c] & {"CODE-LDAP-INJECTION", "CODE-TRUST-BOUNDARY", "CODE-XPATH-INJECTION"}]
-    report["_overall"] = {"score": round(overall, 1), "score_supported_categories": round(sum(supported) / max(1, len(supported)), 1)}
+    report["_overall"] = {"score": round(overall, 1)}
     return report
 
 
@@ -82,6 +81,5 @@ if __name__ == "__main__":
             continue
         print(f"{cat:<16}{r['tpr']:>7}{r['fpr']:>7}{r['score']:>8}   {r['tp']} {r['fn']} {r['fp']} {r['tn']}")
     print(f"\nOWASP Benchmark score (all 14 categories): {rep['_overall']['score']}")
-    print(f"Score on categories Rempart has rules for: {rep['_overall']['score_supported_categories']}")
     if len(sys.argv) > 2:
         Path(sys.argv[2]).write_text(json.dumps(rep, indent=1))
