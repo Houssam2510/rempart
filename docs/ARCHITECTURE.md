@@ -23,7 +23,13 @@ scanners[*].scan(ctx) → Iterable[Finding]       (a crashing scanner is reporte
 run_scan()            config.disable, severity overrides, inline `rempart:ignore`, de-duplication
    │
    ▼
-History.apply_knowledge()   drop fingerprints marked FP/accepted, recalibrate confidence per rule
+--baseline REF        scan REF in a throwaway git worktree, keep only findings it does not have
+   │
+   ▼
+History.apply_knowledge()   drop fingerprints marked FP/accepted, recalibrate confidence per rule × kind of file
+   │
+   ▼
+build_graph() + correlate()   resource graph → CHAIN-* findings, linked (with route) or co-occurrence
    │
    ▼
 reporters             console · JSON · SARIF 2.1.0 · Markdown · HTML
@@ -37,7 +43,10 @@ rempart image REF|tar   images.py      registry v2 client (token auth) → layer
                                         → DependencyScanner.vulnerabilities() (OSV + KEV + EPSS) + EOL + config + secrets
 rempart cloud aws       cloud_aws.py   AWSAudit(session): global IAM/S3/CloudTrail, then regions in parallel;
                                         every API error becomes an AWS-CHECK-SKIPPED finding, never a crash
+rempart cloud gcp|azure cloud_multi.py GCPAudit / AzureAudit over a Runner (gcloud / az JSON); fixtures in tests replace the Runner
 rempart k8s             kube_live.py   kubectl get … -o json → KubernetesScanner.document() on live objects
+scan --git-history      continuous.py  git log -p --all: added lines × provider regexes, minus what is still in the tree
+rempart watch           continuous.py  tree signature (HEAD + status + mtimes) → re-scan → new / fixed
 rempart scan --aws/--image             merges those findings before correlation
 ```
 
@@ -45,12 +54,13 @@ rempart scan --aws/--image             merges those findings before correlation
 
 | Layer | Module | Effect on a finding |
 |---|---|---|
-| Data flow | `scanners/code.py` (`PythonAnalyzer` scopes, `js_tracked_names`) | more true positives through variables; `extra.dataflow` names the variable and source line |
-| Reachability | `reachability.py` | `verification` = reachable / declared / not-imported; confidence ×0.6 when not imported |
+| Data flow | `pyflow.py` (`FunctionFlow`, `build_index` summaries), `scanners/code.py` (`js_tracked_names`, `js_function_summaries`) | Python: values carry taint/sanitisation/constants through branches, loops and guards; every function and method is summarised over 3 rounds so taint and constants cross functions and files. JS/TS: variables and functions within a file |
+| Reachability | `reachability.py`, `scanners/deps.py` | `verification` = function-reachable (call site of an OSV-listed symbol) / reachable / imported / declared / not-imported; dev-only packages one level lower; `upgrade_plan()` per package |
 | Live verification | `verify.py` | `live-secret` → CRITICAL, confidence 1.0; `revoked-secret` → LOW |
-| Correlation | `correlate.py` | adds `CHAIN-*` findings (domain `attack-path`), built after triage so suppressed noise cannot form chains |
-| AI review | `agent.py` | `ai-confirmed` / `ai-rejected` / `ai-uncertain`, reasoning and evidence in `extra`, proposed patches |
-| Learning | `history.py` | per-rule Beta posterior; AI verdicts weigh 0.5 and cannot close findings |
+| Resource graph | `graph.py` | nodes: Terraform blocks, compose services, k8s objects, image build contexts; edges: references, depends_on/networks, selectors/service accounts/bindings, image built here → workload or `user_data` that runs it |
+| Correlation | `correlate.py` | adds `CHAIN-*` findings (domain `attack-path`) after triage; infrastructure chains are `linked` only through a graph path, otherwise `co-occurrence` one level lower |
+| AI review | `agent.py`, `agent_eval.py` | `ai-confirmed` / `ai-rejected` / `ai-uncertain`, reasoning and evidence in `extra`, proposed patches, proof tests (written, never run); `agent-eval` scores it on `corpus/agent_cases.json` |
+| Learning | `history.py` | Beta posterior per rule, then per rule × kind of file (code, scripts, tests, infra, CI, frontend, docs) with the rule-wide value as prior; AI verdicts weigh 0.5 and cannot close findings |
 
 ## Agent loop (`agent.py`)
 

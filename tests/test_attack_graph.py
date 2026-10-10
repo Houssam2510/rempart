@@ -87,6 +87,18 @@ class AttackGraphTest(unittest.TestCase):
         self.assertEqual(found[0].verification, "linked")
         self.assertIn("aws_instance.web", " ".join(found[0].extra["route"]))
 
+    def test_image_built_here_links_code_to_the_cluster_that_runs_it(self) -> None:
+        result = scan_tree({
+            "app.py": APP,
+            ".github/workflows/build.yml": "on: push\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: docker build -t ghcr.io/acme/api:${{ github.sha }} .\n",
+            "deploy/api.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\nspec:\n  template:\n    spec:\n      containers:\n"
+                               "        - name: api\n          image: ghcr.io/acme/api:1.4.2\n          securityContext:\n            privileged: true\n",
+        })
+        found = chains(result, "CHAIN-RCE-TO-HOST")
+        self.assertTrue(found)
+        self.assertEqual(found[0].verification, "linked")
+        self.assertIn("Deployment/api", " ".join(found[0].extra["route"]))
+
 
 if __name__ == "__main__":
     unittest.main()

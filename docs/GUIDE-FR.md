@@ -23,6 +23,17 @@ rempart image python:3.12-slim                   # image d'un registre, sans Doc
 rempart cloud aws --profile prod                 # audit AWS en lecture seule (politique SecurityAudit)
 rempart k8s --context prod                       # cluster Kubernetes via kubectl
 rempart scan . --verify-secrets                  # une clé fuitée est-elle encore active ? (tes dépôts seulement)
+rempart cloud gcp --project mon-projet           # Google Cloud via gcloud, lecture seule
+rempart cloud azure                              # Azure via az, lecture seule
+```
+
+Au quotidien sur une branche :
+
+```bash
+rempart scan . --baseline origin/main            # seulement ce que la branche ajoute
+rempart scan . --git-history                     # secrets supprimés des fichiers mais restés dans l'historique
+rempart scan . --prod-only                       # ignorer les dépendances de build et de test
+rempart watch .                                  # re-scan à chaque modification, n'affiche que la différence
 ```
 
 ## 1b. L'agent IA
@@ -70,12 +81,13 @@ La boucle qui a servi à construire la v0.1 est la bonne :
 
 Pistes classées par valeur (détails dans `docs/ROADMAP.md`) :
 
-- **Graphe d'attaque par ressource** : relier les maillons par ressource réelle plutôt que par présence dans le même dépôt.
-- **Mode `--baseline`** : ne montrer que ce qu'une branche ajoute. Indispensable pour l'utiliser en PR.
-- **Secrets dans l'historique git** : les secrets supprimés restent récupérables.
-- **Suivi de flux entre fonctions** : la v0.2 suit les variables dans une même fonction, pas encore d'une fonction à l'autre.
+Livré en 0.3 : graphe de ressources, `--baseline`, secrets dans l'historique, flux entre fonctions (Python, tout le dépôt ; JS, dans un fichier), corpus d'évaluation de l'agent, GCP et Azure, RPM/Go/JAR.
+
+- **Flux JS/TS entre modules** : suivre les imports comme on le fait déjà en Python.
+- **Lier le cloud observé au dépôt** : rattacher un groupe de sécurité ou une instance réelle à la ressource Terraform et à l'image qui l'ont créée.
+- **Chemins d'attaque confirmés par l'agent** : lui demander de prouver ou de casser chaque maillon, avec un test de preuve.
 - **Politique de « cooldown »** sur les paquets publiés il y a moins de N jours : la seule défense contre les vers qui publient avec une provenance SLSA valide.
-- **Corpus d'évaluation de l'agent** : des cas étiquetés pour mesurer sa précision règle par règle.
+- **Mesurer l'agent avec une vraie clé** : `rempart agent-eval`, puis publier le score par modèle.
 
 ## 4. Le présenter en entrevue
 
@@ -88,14 +100,15 @@ Points à mettre en avant :
 - **L'agent IA sûr par construction.** Il n'a que des outils de lecture, traite le contenu du dépôt comme non fiable et ne supprime jamais un résultat.
 
 - **La priorisation par l'exploitation réelle.** Un CVSS de 9,8 jamais exploité passe après une faille listée au KEV. C'est la logique de la directive BOD 22-01 de la CISA.
-- **La précision mesurée.** L'outil a été testé sur de vrais dépôts. Chaque faux positif est devenu un test de non-régression, par exemple le cookie de langue, le JSON-LD déjà échappé ou les regex bornées.
+- **La précision mesurée.** 99,4 sur l'OWASP Benchmark Python (1 230 cas étiquetés), et une précision passée de 8 % à 80 % sur dix vrais dépôts étiquetés à la main, sans perdre une seule vraie faille. Chaque faux positif est devenu un test de non-régression.
+- **Les chemins prouvés.** Un chemin d'attaque n'est « lié » que si l'infrastructure relie ses maillons, et Rempart affiche la route (`aws_iam_policy.ci → … → aws_instance.worker`). Sinon il est signalé comme simple coïncidence, un cran plus bas.
 - **La couverture actuelle.** Le projet suit l'OWASP Top 10:2025, le CWE Top 25 de 2025 et le Top 10 agentique de 2026, avec des incidents récents comme React2Shell, Shai-Hulud, TanStack et tj-actions.
 - **L'honnêteté sur les limites.** Le README dit ce que l'analyse statique ne voit pas : la logique métier, l'IDOR, la mémoire. Un recruteur sécurité respecte ça plus qu'une promesse de « tout détecter ».
 - **Le volet données.** Il couvre Supabase RLS, les règles Firebase, MongoDB exposé et les données personnelles, avec un renvoi à la Loi 25 du Québec, un atout pour un poste au Canada.
 
 Questions probables et pistes de réponse :
 
-- *« Pourquoi pas Semgrep ou CodeQL ? »* Ils vont plus loin sur le flux de données dans le code. Rempart couvre en plus les images, le cloud en direct, l'IaC, les données, le CI/CD et les agents, les relie en chemins d'attaque, priorise par l'exploitation et apprend. Les deux sont complémentaires.
+- *« Pourquoi pas Semgrep ou CodeQL ? »* CodeQL va plus loin sur le flux de données JS entre modules. Rempart couvre en plus les images, le cloud en direct, l'IaC, les données, le CI/CD et les agents, les relie en chemins d'attaque, priorise par l'exploitation et apprend. Les deux sont complémentaires.
 - *« Comment tu empêches l'agent d'être manipulé par du code malveillant ? »* Il n'a aucun outil d'écriture, d'exécution ou de réseau, il ne lit que les fichiers du scan, le contenu du dépôt est déclaré non fiable dans ses consignes, et ses verdicts ne peuvent pas fermer un résultat.
 - *« Comment gères-tu les faux positifs ? »* Il y a quatre niveaux : un puits **et** une source non fiable sur la même ligne, des motifs de désinfection (`unless`), une confiance a priori par règle, puis le recalibrage bayésien à partir des verdicts.
-- *« Comment le passerais-tu à l'échelle ? »* Mode baseline pour les PR, cache partagé de la veille sur les menaces, calibration exportée par équipe.
+- *« Comment le passerais-tu à l'échelle ? »* Le mode baseline et le commentaire de PR existent déjà ; ensuite un cache partagé de la veille sur les menaces et une calibration exportée par équipe.

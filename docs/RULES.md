@@ -1,6 +1,6 @@
 # Rules
 
-Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, cicd 16, cloud 30, code 36, containers 12, data 19, dependencies 3, iac 31, image 11, kubernetes 17, performance 12, quality 10, secrets 32, supply-chain 6, web 14.
+Generated with `rempart rules --markdown`. 316 rules · ai 10, attack-path 9, cicd 16, cloud 54, code 40, containers 12, data 19, dependencies 3, iac 31, image 11, kubernetes 17, performance 12, quality 10, secrets 52, supply-chain 6, web 14.
 
 | Rule | Severity | Domain | Title | CWE | OWASP 2025 | Other frameworks |
 |---|---|---|---|---|---|---|
@@ -69,6 +69,30 @@ Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, ci
 | `AWS-SG-DATA-PORT-OPEN` | CRITICAL | cloud | Security group opens a database port to the internet | CWE-668 | A02:2025 | CIS AWS Foundations Benchmark |
 | `AWS-SNAPSHOT-PUBLIC` | CRITICAL | cloud | EBS snapshot or AMI shared publicly | CWE-200 | A01:2025 | CIS AWS Foundations Benchmark |
 | `AWS-VPC-NO-FLOW-LOGS` | LOW | cloud | VPC without flow logs | CWE-778 | A09:2025 | CIS AWS Foundations Benchmark |
+| `AZ-CHECK-SKIPPED` | INFO | cloud | Azure check could not run |  |  |  |
+| `AZ-KEYVAULT-NO-PURGE-PROTECTION` | LOW | cloud | Key Vault without purge protection | CWE-404 | A02:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-NSG-ADMIN-OPEN` | HIGH | cloud | Network security group opens an administration port to the internet | CWE-284 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-NSG-DATA-OPEN` | CRITICAL | cloud | Network security group opens a database port to the internet | CWE-284 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-RBAC-SP-OWNER` | HIGH | cloud | Service principal is Owner of the subscription | CWE-269 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-SQL-FIREWALL-ANY` | CRITICAL | cloud | Azure SQL server firewall allows every address | CWE-284 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-STORAGE-HTTP` | HIGH | cloud | Storage account accepts plain HTTP | CWE-319 | A04:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-STORAGE-OLD-TLS` | MEDIUM | cloud | Storage account accepts TLS below 1.2 | CWE-326 | A04:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-STORAGE-OPEN-NETWORK` | MEDIUM | cloud | Storage account reachable from every network | CWE-284 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `AZ-STORAGE-PUBLIC-BLOB` | HIGH | cloud | Storage account allows anonymous blob access | CWE-284 | A01:2025 | CIS Microsoft Azure Foundations Benchmark |
+| `GCP-CHECK-SKIPPED` | INFO | cloud | Google Cloud check could not run |  |  |  |
+| `GCP-FW-ADMIN-OPEN` | HIGH | cloud | Firewall rule opens an administration port to the internet | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-FW-DATA-OPEN` | CRITICAL | cloud | Firewall rule opens a database port to the internet | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-IAM-PUBLIC-MEMBER` | CRITICAL | cloud | Project role granted to allUsers or allAuthenticatedUsers | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-IAM-SA-KEY-OLD` | MEDIUM | cloud | User-managed service account key older than 90 days | CWE-324 | A07:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-IAM-SA-PRIMITIVE-ROLE` | HIGH | cloud | Service account holds Owner or Editor on the project | CWE-269 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-LOGGING-NO-DATA-ACCESS` | LOW | cloud | Data access audit logs are not enabled | CWE-778 | A09:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-SQL-AUTHORIZED-ANY` | CRITICAL | cloud | Cloud SQL instance accepts connections from any address | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-SQL-NO-BACKUP` | MEDIUM | cloud | Cloud SQL automated backups disabled | CWE-404 | A02:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-SQL-NO-SSL` | MEDIUM | cloud | Cloud SQL instance does not require TLS | CWE-319 | A04:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-STORAGE-NO-PAP` | MEDIUM | cloud | Bucket without public access prevention or uniform access | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-STORAGE-PUBLIC` | CRITICAL | cloud | Cloud Storage bucket readable by anyone | CWE-284 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-VM-DEFAULT-SA-FULL-SCOPE` | HIGH | cloud | VM runs as the default service account with full API scope | CWE-269 | A01:2025 | CIS Google Cloud Platform Foundation Benchmark |
+| `GCP-VM-SERIAL-PORT` | LOW | cloud | Interactive serial console enabled | CWE-16 | A02:2025 | CIS Google Cloud Platform Foundation Benchmark |
 | `CODE-CMD-INJECTION` | CRITICAL | code | OS command built from dynamic input | CWE-78, CWE-77 | A05:2025 |  |
 | `CODE-COOKIE-FLAGS` | MEDIUM | code | Session cookie without Secure/HttpOnly | CWE-614, CWE-1004 | A07:2025 |  |
 | `CODE-CORS-PERMISSIVE` | HIGH | code | CORS reflects any origin with credentials | CWE-942 | A02:2025 |  |
@@ -79,6 +103,7 @@ Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, ci
 | `CODE-IDOR-CANDIDATE` | LOW | code | Object fetched by client-supplied ID with no visible ownership check | CWE-639, CWE-862, CWE-863 | A01:2025 | OWASP API1:2023 BOLA |
 | `CODE-INSECURE-TEMPFILE` | MEDIUM | code | Predictable temporary file | CWE-377 | A02:2025 |  |
 | `CODE-JWT-UNVERIFIED` | CRITICAL | code | JWT accepted without signature or expiry verification | CWE-347, CWE-287 | A07:2025 |  |
+| `CODE-LDAP-INJECTION` | HIGH | code | LDAP filter built from user input | CWE-90 | A05:2025 |  |
 | `CODE-MASS-ASSIGNMENT` | MEDIUM | code | Request body written straight into a model | CWE-915 | A01:2025 |  |
 | `CODE-NOSQL-INJECTION` | HIGH | code | NoSQL query accepting raw request objects or $where | CWE-943 | A05:2025 |  |
 | `CODE-OPEN-REDIRECT` | MEDIUM | code | Redirect target taken from user input | CWE-601 | A01:2025 |  |
@@ -94,16 +119,19 @@ Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, ci
 | `CODE-TLS-VERIFY-DISABLED` | HIGH | code | TLS certificate verification disabled | CWE-295 | A04:2025 |  |
 | `CODE-TOKEN-LOCALSTORAGE` | MEDIUM | code | Auth token stored in localStorage | CWE-922 | A07:2025 |  |
 | `CODE-TROJAN-SOURCE` | HIGH | code | Bidirectional or invisible Unicode control characters in source | CWE-1007, CWE-451 | A08:2025 |  |
+| `CODE-TRUST-BOUNDARY` | LOW | code | User input stored in the server-side session | CWE-501 | A04:2025 |  |
 | `CODE-UNRESTRICTED-UPLOAD` | HIGH | code | File upload without type, name or size restrictions | CWE-434, CWE-770 | A06:2025 |  |
 | `CODE-UNSAFE-C-FUNCTION` | HIGH | code | Unbounded C string/memory function | CWE-120, CWE-121, CWE-122, CWE-787 | A06:2025 |  |
 | `CODE-UNSAFE-DESERIALIZATION` | HIGH | code | Deserialization of untrusted data | CWE-502 | A08:2025 |  |
 | `CODE-WEAK-CIPHER` | HIGH | code | Weak cipher or mode (DES, RC4, ECB, no IV) | CWE-327 | A04:2025 |  |
-| `CODE-WEAK-HASH` | MEDIUM | code | Broken hash algorithm (MD5/SHA-1) | CWE-327 | A04:2025 |  |
+| `CODE-WEAK-HASH` | LOW | code | Broken hash algorithm (MD5/SHA-1) | CWE-327 | A04:2025 |  |
 | `CODE-WEAK-PASSWORD-HASH` | HIGH | code | Password hashed with a fast hash | CWE-916 | A04:2025 |  |
 | `CODE-WEAK-RANDOM` | MEDIUM | code | Non-cryptographic RNG used for a security value | CWE-338 | A04:2025 |  |
 | `CODE-WEAK-SANDBOX` | HIGH | code | Untrusted code run in a non-isolating sandbox | CWE-94 | A05:2025 |  |
+| `CODE-XPATH-INJECTION` | HIGH | code | XPath query built from user input | CWE-643 | A05:2025 |  |
 | `CODE-XSS-SINK` | MEDIUM | code | Untrusted HTML written to the DOM | CWE-79 | A05:2025 |  |
 | `CODE-XXE` | MEDIUM | code | XML parser without external-entity protection | CWE-611 | A02:2025 |  |
+| `CODE-XXE-ENABLED` | HIGH | code | XML parsed with external entities enabled | CWE-611 | A02:2025 |  |
 | `CTX-BIND-ALL` | INFO | code | Server binds all interfaces (context) |  |  |  |
 | `COMPOSE-DOCKER-SOCKET` | CRITICAL | containers | Docker socket mounted into a container | CWE-250 | A02:2025 | K01:2025 Insecure Workload Configurations |
 | `COMPOSE-PRIVILEGED` | HIGH | containers | Compose service with host-level privileges | CWE-250 | A02:2025 | K01:2025 Insecure Workload Configurations |
@@ -203,7 +231,7 @@ Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, ci
 | `K8S-NO-RESOURCE-LIMITS` | MEDIUM | performance | No CPU/memory requests or limits | CWE-770, CWE-400 | A02:2025 | K01:2025 Insecure Workload Configurations |
 | `PERF-HEAVY-IMPORT` | LOW | performance | Whole heavy library imported |  |  |  |
 | `PERF-JSON-DEEP-CLONE` | LOW | performance | Deep clone through JSON round-trip |  |  |  |
-| `PERF-N-PLUS-ONE` | MEDIUM | performance | Database or network call inside a loop | CWE-1050 |  |  |
+| `PERF-N-PLUS-ONE` | LOW | performance | Database or network call inside a loop | CWE-1050 |  |  |
 | `PERF-NO-TIMEOUT` | MEDIUM | performance | Network call without a timeout | CWE-400, CWE-1088 |  |  |
 | `PERF-SYNC-IO-IN-SERVER` | LOW | performance | Blocking I/O in a request path | CWE-1050 |  |  |
 | `PERF-UNBOUNDED-QUERY` | LOW | performance | Unbounded query loads an entire collection/table | CWE-770, CWE-400 | A02:2025 |  |
@@ -221,36 +249,56 @@ Generated with `rempart rules --markdown`. 268 rules · ai 10, attack-path 9, ci
 | `QUAL-SECURITY-TODO` | LOW | quality | Unfinished security work flagged in a comment | CWE-1164 | A06:2025 |  |
 | `QUAL-SWALLOWED-EXCEPTION` | MEDIUM | quality | Exception swallowed silently | CWE-390, CWE-755 | A10:2025 |  |
 | `COMPOSE-SECRET-LITERAL` | HIGH | secrets | Credential written in docker-compose | CWE-798 | A07:2025 |  |
+| `SEC-AGE-KEY` | CRITICAL | secrets | Hard-coded age encryption secret key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-AIRTABLE-PAT` | HIGH | secrets | Hard-coded Airtable personal access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-ANTHROPIC-KEY` | CRITICAL | secrets | Hard-coded Anthropic API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-ATLASSIAN-TOKEN` | HIGH | secrets | Hard-coded Atlassian API token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-AWS-ACCESS-KEY` | CRITICAL | secrets | Hard-coded AWS access key ID | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-AZURE-STORAGE-KEY` | CRITICAL | secrets | Hard-coded Azure storage account key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-CLOUDFLARE-TOKEN` | HIGH | secrets | Hard-coded Cloudflare API token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-DIGITALOCEAN-TOKEN` | CRITICAL | secrets | Hard-coded DigitalOcean token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-DISCORD-WEBHOOK` | MEDIUM | secrets | Hard-coded Discord webhook | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-DOPPLER-TOKEN` | HIGH | secrets | Hard-coded Doppler token | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-DYNATRACE-TOKEN` | HIGH | secrets | Hard-coded Dynatrace API token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-ENV-COMMITTED` | HIGH | secrets | Environment file committed to the repository | CWE-538, CWE-798 | A02:2025 |  |
+| `SEC-FIGMA-TOKEN` | HIGH | secrets | Hard-coded Figma personal access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-GCP-SERVICE-ACCOUNT` | CRITICAL | secrets | Hard-coded GCP service account key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-GENERIC` | HIGH | secrets | Hard-coded secret in assignment | CWE-798 | A07:2025 |  |
+| `SEC-GIT-HISTORY` | HIGH | secrets | Secret still reachable in git history | CWE-798 | A07:2025, A02:2025 |  |
 | `SEC-GITHUB-TOKEN` | CRITICAL | secrets | Hard-coded GitHub token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-GITLAB-TOKEN` | CRITICAL | secrets | Hard-coded GitLab personal access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-GOOGLE-API-KEY` | HIGH | secrets | Hard-coded Google API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-GRAFANA-TOKEN` | HIGH | secrets | Hard-coded Grafana token | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-GROQ-KEY` | HIGH | secrets | Hard-coded Groq API key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-HUGGINGFACE-TOKEN` | HIGH | secrets | Hard-coded Hugging Face token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-JWT` | MEDIUM | secrets | Hard-coded JSON Web Token | CWE-798 | A07:2025 |  |
 | `SEC-KEY-FILE` | CRITICAL | secrets | Key or credential file committed | CWE-312, CWE-798 | A04:2025 |  |
+| `SEC-LINEAR-KEY` | HIGH | secrets | Hard-coded Linear API key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-MAILGUN-KEY` | HIGH | secrets | Hard-coded Mailgun API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-MAPBOX-SECRET` | HIGH | secrets | Hard-coded Mapbox secret token | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-NEWRELIC-KEY` | HIGH | secrets | Hard-coded New Relic user API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-NOTION-TOKEN` | HIGH | secrets | Hard-coded Notion integration token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-NPM-TOKEN` | CRITICAL | secrets | Hard-coded npm access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-NPMRC-TOKEN` | CRITICAL | secrets | Registry auth token in .npmrc / .pypirc | CWE-798 | A07:2025 |  |
 | `SEC-OPENAI-KEY` | CRITICAL | secrets | Hard-coded OpenAI API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-PERPLEXITY-KEY` | HIGH | secrets | Hard-coded Perplexity API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-PLANETSCALE-TOKEN` | CRITICAL | secrets | Hard-coded PlanetScale credential | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-POSTMAN-KEY` | HIGH | secrets | Hard-coded Postman API key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-PRIVATE-KEY` | CRITICAL | secrets | Hard-coded Private key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-PYPI-TOKEN` | CRITICAL | secrets | Hard-coded PyPI upload token | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-REPLICATE-TOKEN` | HIGH | secrets | Hard-coded Replicate API token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-RESEND-KEY` | HIGH | secrets | Hard-coded Resend API key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-SENDGRID-KEY` | HIGH | secrets | Hard-coded SendGrid API key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-SENTRY-TOKEN` | HIGH | secrets | Hard-coded Sentry auth token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-SHOPIFY-TOKEN` | HIGH | secrets | Hard-coded Shopify access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-SLACK-TOKEN` | HIGH | secrets | Hard-coded Slack token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-SLACK-WEBHOOK` | MEDIUM | secrets | Hard-coded Slack incoming webhook | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-SQUARE-TOKEN` | CRITICAL | secrets | Hard-coded Square access token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-STRIPE-LIVE` | CRITICAL | secrets | Hard-coded Stripe live secret key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-STRIPE-TEST` | LOW | secrets | Hard-coded Stripe test secret key | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-STRIPE-WEBHOOK` | HIGH | secrets | Hard-coded Stripe webhook signing secret | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-SUPABASE-SERVICE` | CRITICAL | secrets | Hard-coded Supabase service-role key | CWE-798 | A07:2025, A04:2025 |  |
+| `SEC-TELEGRAM-BOT` | HIGH | secrets | Hard-coded Telegram bot token | CWE-798 | A07:2025, A04:2025 |  |
 | `SEC-TWILIO-KEY` | HIGH | secrets | Hard-coded Twilio API key | CWE-798 | A07:2025, A04:2025 |  |
 | `SUPPLY-DEPENDENCY-CONFUSION` | HIGH | supply-chain | Extra package index allows dependency confusion | CWE-427 | A03:2025 |  |
 | `SUPPLY-INSECURE-REGISTRY` | HIGH | supply-chain | Packages fetched over plain HTTP | CWE-319, CWE-494 | A03:2025, A08:2025 |  |

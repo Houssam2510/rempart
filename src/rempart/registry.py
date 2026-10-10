@@ -73,7 +73,7 @@ def rule(
 
 def load_all_rules() -> dict[str, Rule]:
     """Import every scanner module so their rules register themselves."""
-    from rempart import cloud_aws, correlate, images, web  # noqa: F401
+    from rempart import cloud_aws, cloud_multi, continuous, correlate, images, web  # noqa: F401
     from rempart.scanners import ALL_SCANNERS  # noqa: F401
 
     return REGISTRY

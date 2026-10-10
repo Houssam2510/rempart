@@ -24,6 +24,22 @@ resource "aws_iam_policy" "ci" {
   })
 }
 
+resource "aws_iam_role" "worker" {
+  name               = "worker"
+  assume_role_policy = "{}"
+}
+
+resource "aws_iam_role_policy_attachment" "worker_ci" {
+  role       = aws_iam_role.worker.name
+  policy_arn = aws_iam_policy.ci.arn
+}
+
+resource "aws_iam_instance_profile" "worker" {
+  role = aws_iam_role.worker.name
+}
+
 resource "aws_instance" "worker" {
-  ami = "ami-00000000"
+  ami                  = "ami-00000000"
+  iam_instance_profile = aws_iam_instance_profile.worker.name
+  user_data            = "docker run -d -p 80:8000 demo/api:latest"
 }

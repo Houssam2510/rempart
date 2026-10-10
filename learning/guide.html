@@ -59,17 +59,17 @@ svg text{font-family:Inter,system-ui,sans-serif}
     <path d="M32 2 L60 12 V36 C60 54 47 66 32 72 C17 66 4 54 4 36 V12 Z" fill="url(#sg)"/>
     <path d="M18 24h28v8H18zM18 36h12v12H18zM34 36h12v12H34z" fill="#fff" opacity=".92"/>
   </svg>
-  <div class="tag" style="margin-top:10mm">Guide d'apprentissage · version 0.2</div>
+  <div class="tag" style="margin-top:10mm">Guide d'apprentissage · version 0.3</div>
   <h1>Rempart,<br>expliqué en images</h1>
   <p>Ce que fait l'outil, comment il raisonne, et pourquoi chaque morceau existe. Une idée par page, des exemples réels tirés de tes propres projets.</p>
   <div style="margin:10mm 0 0;display:flex;flex-wrap:wrap;gap:2mm">
-    <span class="pill p-brand">Code</span><span class="pill p-brand">Secrets</span><span class="pill p-brand">Dépendances</span><span class="pill p-brand">Images</span><span class="pill p-brand">AWS en direct</span><span class="pill p-brand">Kubernetes</span><span class="pill p-brand">CI/CD</span><span class="pill p-brand">Données</span><span class="pill p-brand">Agents IA</span><span class="pill p-brand">Web</span>
+    <span class="pill p-brand">Code</span><span class="pill p-brand">Secrets</span><span class="pill p-brand">Dépendances</span><span class="pill p-brand">Images</span><span class="pill p-brand">AWS, GCP, Azure en direct</span><span class="pill p-brand">Kubernetes</span><span class="pill p-brand">CI/CD</span><span class="pill p-brand">Données</span><span class="pill p-brand">Agents IA</span><span class="pill p-brand">Web</span>
   </div>
   <div class="kpis">
-    <div class="kpi"><div class="big">268</div><div>règles de détection</div></div>
+    <div class="kpi"><div class="big">316</div><div>règles de détection</div></div>
     <div class="kpi"><div class="big">16</div><div>domaines couverts</div></div>
-    <div class="kpi"><div class="big">9</div><div>chemins d'attaque reconnus</div></div>
-    <div class="kpi"><div class="big">79</div><div>tests automatiques, tous verts</div></div>
+    <div class="kpi"><div class="big">99,4</div><div>sur l'OWASP Benchmark Python</div></div>
+    <div class="kpi"><div class="big">116</div><div>tests automatiques, tous verts</div></div>
   </div>
   <div class="num" style="color:#8a8daa">1</div>
 </section>
@@ -106,7 +106,7 @@ svg text{font-family:Inter,system-ui,sans-serif}
         <text x="18" y="182">images</text><text x="110" y="182">aws live</text>
         <text x="18" y="212">web passif</text>
       </g>
-      <text x="18" y="244" fill="#8e75ff" font-size="12" font-weight="700">→ 268 règles</text>
+      <text x="18" y="244" fill="#8e75ff" font-size="12" font-weight="700">→ 316 règles</text>
     </g>
     <path d="M442 160 H488" stroke="#9aa1ad" stroke-width="2" marker-end="url(#ar)"/>
     <!-- intelligence -->
@@ -210,9 +210,9 @@ svg text{font-family:Inter,system-ui,sans-serif}
 cur.execute(q, <span class="good">(user_id,)</span>)
 <span class="c"># la base reçoit la valeur à part : impossible d'injecter du SQL</span></pre>
   <div class="grid3" style="margin-top:6mm">
-    <div class="card soft"><h3>Python</h3><p>Analyse de l'arbre syntaxique (AST), variable par variable, fonction par fonction. Les paramètres de routes FastAPI comptent comme données utilisateur.</p></div>
+    <div class="card soft"><h3>Python</h3><p>Analyse de l'arbre syntaxique (AST), variable par variable. Chaque fonction du dépôt est résumée, donc la donnée traverse les fonctions et les fichiers (voir page 15).</p></div>
     <div class="card soft"><h3>JavaScript / TS</h3><p>Suit <code>req.body</code>, <code>request.json()</code>, <code>searchParams</code> et la déstructuration <code>const { file } = req.query</code>.</p></div>
-    <div class="card soft"><h3>Limite honnête</h3><p>Le suivi s'arrête à la frontière d'une fonction. Si la valeur passe par trois fonctions, c'est l'agent IA qui prend le relais.</p></div>
+    <div class="card soft"><h3>Limite honnête</h3><p>En JS/TS, le suivi traverse les fonctions d'un même fichier, pas encore les imports entre modules. Là, c'est l'agent IA qui prend le relais.</p></div>
   </div>
   <div class="num">4</div>
 </section>
@@ -332,8 +332,8 @@ alpine:3.18 · Alpine Linux v3.18 · 10 packages · user root · built 2025-02-1
     </g>
     <g stroke="#14161b" stroke-width="2" fill="none" marker-end="url(#ar3)"><path d="M152 115 H226"/><path d="M432 105 C470 105 480 55 516 55"/><path d="M432 125 C470 125 480 175 516 175"/></g>
   </svg>
-  <h2>13 fournisseurs</h2>
-  <div style="margin-bottom:3mm"><span class="pill p-blue">AWS (STS)</span><span class="pill p-blue">GitHub</span><span class="pill p-blue">GitLab</span><span class="pill p-blue">Slack</span><span class="pill p-blue">Stripe live</span><span class="pill p-blue">Stripe test</span><span class="pill p-blue">OpenAI</span><span class="pill p-blue">Anthropic</span><span class="pill p-blue">Hugging Face</span><span class="pill p-blue">npm</span><span class="pill p-blue">SendGrid</span><span class="pill p-blue">DigitalOcean</span><span class="pill p-blue">Resend</span></div>
+  <h2>24 fournisseurs</h2>
+  <div style="margin-bottom:3mm"><span class="pill p-blue">AWS (STS)</span><span class="pill p-blue">GitHub</span><span class="pill p-blue">GitLab</span><span class="pill p-blue">Slack</span><span class="pill p-blue">Stripe live</span><span class="pill p-blue">Stripe test</span><span class="pill p-blue">OpenAI</span><span class="pill p-blue">Anthropic</span><span class="pill p-blue">Hugging Face</span><span class="pill p-blue">npm</span><span class="pill p-blue">SendGrid</span><span class="pill p-blue">DigitalOcean</span><span class="pill p-blue">Resend</span><span class="pill p-blue">Linear</span><span class="pill p-blue">Notion</span><span class="pill p-blue">Sentry</span><span class="pill p-blue">Airtable</span><span class="pill p-blue">Figma</span><span class="pill p-blue">Groq</span><span class="pill p-blue">Replicate</span><span class="pill p-blue">Postman</span><span class="pill p-blue">Telegram</span><span class="pill p-blue">Mapbox</span><span class="pill p-blue">New Relic</span></div>
   <div class="grid2">
     <div class="card"><h3>Le cas AWS</h3><p>Il faut l'ID de clé <b>et</b> le secret à côté, puis signer la requête avec l'algorithme SigV4. Rempart le fait avec la seule bibliothèque standard Python, et un test vérifie que la signature est identique, octet pour octet, à celle de botocore.</p></div>
     <div class="card"><h3>Règle d'éthique</h3><p>Uniquement sur tes propres dépôts. Rien n'est écrit avec la clé, rien n'est stocké : seule l'identité renvoyée (ex. « GitHub user octo ») apparaît.</p></div>
@@ -524,6 +524,95 @@ rempart history        <span class="c"># évolution de la note, nouveaux / corri
   <div class="num">14</div>
 </section>
 
+<!-- 15. FLUX ENTRE FONCTIONS -->
+<section class="page">
+  <div class="tag">Nouveau en 0.3 · flux de données</div>
+  <h1>Suivre la donnée d'une fonction à l'autre</h1>
+  <p class="lead">Avant, le suivi s'arrêtait au bord d'une fonction. Maintenant, Rempart résume <b>chaque fonction du dépôt</b> : ce qui entre, ce qui ressort, et ce qui atteint un endroit dangereux.</p>
+  <svg viewBox="0 0 720 250" width="100%">
+    <defs><marker id="ar15" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#14161b"/></marker></defs>
+    <g font-size="12">
+      <rect x="0" y="0" width="330" height="112" rx="10" fill="#0f1222"/>
+      <text x="14" y="24" fill="#7d8597" font-family="JetBrains Mono" font-size="11">helpers/separate_request.py</text>
+      <text x="14" y="50" fill="#e6e8ef" font-family="JetBrains Mono" font-size="11.5">def get_form_parameter(self, n):</text>
+      <text x="30" y="68" fill="#ffcb6b" font-family="JetBrains Mono" font-size="11.5">return self.request.form.get(n)</text>
+      <text x="14" y="90" fill="#e6e8ef" font-family="JetBrains Mono" font-size="11.5">def get_safe_value(self, n):</text>
+      <text x="30" y="106" fill="#c3e88d" font-family="JetBrains Mono" font-size="11.5">return "bar"</text>
+      <rect x="390" y="0" width="330" height="50" rx="10" fill="#fde2e2"/><text x="404" y="22" font-weight="700" fill="#d92d2d">Résumé : renvoie une donnée de la requête</text><text x="404" y="40" font-size="11" fill="#5c6370">tout appel → résultat « contaminé »</text>
+      <rect x="390" y="62" width="330" height="50" rx="10" fill="#d9f2e8"/><text x="404" y="84" font-weight="700" fill="#12805c">Résumé : renvoie toujours la constante "bar"</text><text x="404" y="102" font-size="11" fill="#5c6370">tout appel → valeur sûre</text>
+      <path d="M332 30 H386" stroke="#14161b" stroke-width="2" marker-end="url(#ar15)"/><path d="M332 92 H386" stroke="#14161b" stroke-width="2" marker-end="url(#ar15)"/>
+      <rect x="0" y="140" width="720" height="104" rx="10" fill="#f5f6f8"/>
+      <text x="14" y="164" font-family="JetBrains Mono" font-size="11.5">param = scr.get_safe_value("x");  eval(param)</text><rect x="470" y="150" width="120" height="20" rx="4" fill="#d9f2e8"/><text x="480" y="165" fill="#12805c" font-weight="700" font-size="11">aucune alerte</text>
+      <text x="14" y="196" font-family="JetBrains Mono" font-size="11.5">param = scr.get_form_parameter("x");  eval(param)</text><rect x="470" y="182" width="120" height="20" rx="4" fill="#d92d2d"/><text x="480" y="197" fill="#fff" font-weight="700" font-size="11">CRITICAL</text>
+      <text x="14" y="228" font-family="JetBrains Mono" font-size="11.5">run_tool(request.args["x"])   # le shell est dans un autre fichier</text><rect x="470" y="214" width="236" height="20" rx="4" fill="#d92d2d"/><text x="480" y="229" fill="#fff" font-weight="700" font-size="11">CRITICAL, avec le fichier et la ligne</text>
+    </g>
+  </svg>
+  <h2>Ce que ça a changé, mesuré</h2>
+  <svg viewBox="0 0 720 150" width="100%">
+    <text x="0" y="14" font-size="12" font-weight="700">Score OWASP Benchmark Python (1 230 cas étiquetés, 0 = hasard, 100 = parfait)</text>
+    <g font-size="11.5">
+      <g transform="translate(0,28)"><text x="0" y="15">Départ (motifs ligne par ligne)</text><rect x="250" y="2" width="64" height="20" rx="3" fill="#d92d2d"/><text x="322" y="17" font-weight="700">14,2</text></g>
+      <g transform="translate(0,56)"><text x="0" y="15">Moteur de flux dans une fonction</text><rect x="250" y="2" width="342" height="20" rx="3" fill="#e8590c"/><text x="600" y="17" font-weight="700">75,8</text></g>
+      <g transform="translate(0,84)"><text x="0" y="15">+ gardes, conteneurs, constantes</text><rect x="250" y="2" width="428" height="20" rx="3" fill="#2a78d6"/><text x="686" y="17" font-weight="700">95,1</text></g>
+      <g transform="translate(0,112)"><text x="0" y="15">+ résumés entre fonctions</text><rect x="250" y="2" width="447" height="20" rx="3" fill="#12805c"/><text x="688" y="17" font-weight="700" text-anchor="end" fill="#fff">99,4</text></g>
+    </g>
+  </svg>
+  <div class="note"><b>Et en JS/TS ?</b> Les fonctions d'un même fichier sont résumées aussi : <code>gitLog(req.query.branch)</code> est signalé si <code>gitLog</code> passe son paramètre à <code>exec</code>. Un <code>exec</code> interpolé sans donnée de requête tracée devient MEDIUM (« à relire »), comme en Python.</div>
+  <div class="num">15</div>
+</section>
+
+<!-- 16. CHEMIN PROUVÉ -->
+<section class="page">
+  <div class="tag">Nouveau en 0.3 · graphe de ressources</div>
+  <h1>Un chemin d'attaque prouvé, pas supposé</h1>
+  <p class="lead">Deux failles dans le même dépôt peuvent concerner deux machines qui ne se parlent pas. Rempart construit maintenant le <b>graphe</b> de ce que ton dépôt déploie, et ne dit « lié » que s'il trouve une route entre les deux.</p>
+  <svg viewBox="0 0 720 234" width="100%">
+    <defs><marker id="ar16" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6d4aff"/></marker></defs>
+    <g font-size="11.5">
+      <rect x="0" y="10" width="150" height="54" rx="9" fill="#fde2e2"/><text x="12" y="32" font-weight="700" fill="#d92d2d">aws_iam_policy.ci</text><text x="12" y="50" fill="#5c6370">Action "*" sur "*"</text>
+      <rect x="190" y="10" width="160" height="54" rx="9" fill="#ece6ff"/><text x="202" y="32" font-weight="700">policy_attachment</text><text x="202" y="50" fill="#5c6370">relie la politique…</text>
+      <rect x="390" y="10" width="140" height="54" rx="9" fill="#ece6ff"/><text x="402" y="32" font-weight="700">aws_iam_role</text><text x="402" y="50" fill="#5c6370">…au rôle…</text>
+      <rect x="570" y="10" width="150" height="54" rx="9" fill="#ece6ff"/><text x="582" y="32" font-weight="700">instance_profile</text><text x="582" y="50" fill="#5c6370">…porté par…</text>
+      <rect x="470" y="110" width="250" height="60" rx="9" fill="#fde2e2"/><text x="482" y="134" font-weight="700" fill="#d92d2d">aws_instance.worker</text><text x="482" y="154" fill="#5c6370">IMDSv1 · user_data lance demo/api</text>
+      <rect x="0" y="110" width="250" height="60" rx="9" fill="#0f1222"/><text x="12" y="134" font-weight="700" fill="#fff">image construite ici</text><text x="12" y="154" fill="#c9cbe0">docker build -t demo/api . (SSRF dedans)</text>
+      <g stroke="#6d4aff" stroke-width="2.4" fill="none" marker-end="url(#ar16)"><path d="M152 37 H186"/><path d="M352 37 H386"/><path d="M532 37 H566"/><path d="M645 66 V106"/><path d="M252 140 H466"/></g>
+      <text x="300" y="132" fill="#6d4aff" font-weight="700">exécutée par</text>
+      <rect x="0" y="186" width="720" height="44" rx="8" fill="#d9f2e8"/><text x="12" y="204" fill="#12805c" font-weight="700" font-size="11">linked: aws_iam_policy.ci → aws_iam_role_policy_attachment.worker_ci → aws_iam_role.worker</text><text x="62" y="222" fill="#12805c" font-weight="700" font-size="11">→ aws_iam_instance_profile.worker → aws_instance.worker</text>
+    </g>
+  </svg>
+  <div class="grid3" style="margin-top:4mm">
+    <div class="card"><h3>Ce qui crée un lien</h3><p>Une référence Terraform, un <code>depends_on</code> ou un réseau compose, un sélecteur Kubernetes, un compte de service, et l'image que ton dépôt construit, retrouvée dans le déploiement qui la lance.</p></div>
+    <div class="card"><h3>Lié → CRITICAL</h3><p>La route s'affiche en vert dans le terminal. C'est elle qu'on montre en revue : on voit la chaîne, maillon par maillon.</p></div>
+    <div class="card"><h3>Pas de lien → un cran plus bas</h3><p>« Co-occurrence » : les pièces existent, mais rien ne prouve qu'elles se touchent. Message explicite, sévérité réduite, confiance 0,5.</p></div>
+  </div>
+  <div class="note"><b>Sur tes 10 projets :</b> aucun chemin d'attaque n'est sorti, lié ou non. C'est cohérent avec l'étiquetage à la main : aucun ne contenait une vraie chaîne. Un outil qui invente des chemins perd la confiance en une semaine.</div>
+  <div class="num">16</div>
+</section>
+
+<!-- 17. EN CONTINU -->
+<section class="page">
+  <div class="tag">Nouveau en 0.3 · au quotidien</div>
+  <h1>Rempart en continu</h1>
+  <p class="lead">Un scan ponctuel vieillit le jour même. Quatre outils pour que la sécurité suive le rythme du code.</p>
+  <div class="grid2">
+    <div class="card"><span class="pill p-brand">--baseline origin/main</span><h3>Juger une PR sur ce qu'elle ajoute</h3><p>Rempart scanne la branche cible dans une copie temporaire (git worktree) et masque tout ce qui existait déjà. Une PR n'hérite plus du passif du dépôt. L'action GitHub le fait par défaut et peut commenter la PR.</p></div>
+    <div class="card"><span class="pill p-crit">--git-history</span><h3>Les secrets qui n'ont jamais vraiment disparu</h3><p>Effacer une clé d'un fichier ne l'efface pas des commits. Rempart relit chaque ligne ajoutée de chaque branche. <b>Sur un de tes projets</b>, il a retrouvé trois clés (OpenAI, Azure Storage, Google) restées dans l'historique d'un <code>docker-compose.yml</code>.</p></div>
+    <div class="card"><span class="pill p-blue">upgrade plan</span><h3>Une ligne par paquet, pas 40 alertes</h3><p>« next 14.2.32 → 15.5.24 : corrige 25 avis sur 25, utilisé par ton code, version majeure ». La plus petite version qui règle tout, en restant sur la même version majeure quand c'est possible. Les dépendances de dev descendent d'un cran.</p></div>
+    <div class="card"><span class="pill p-ok">rempart watch</span><h3>Ne voir que la différence</h3><p>Rempart surveille le dépôt et rescanne à chaque modification. Il n'affiche que ce qui apparaît (+) ou disparaît (−). Pour la nuit, un workflow planifié relance tout avec les CVE du jour.</p></div>
+  </div>
+  <h2>Et l'agent IA prouve ce qu'il confirme</h2>
+  <pre><span class="c"># rempart-proofs/test_proof_export.py · écrit par l'agent, jamais exécuté par Rempart</span>
+<span class="k">def</span> test_export_escapes_its_folder(client, monkeypatch):
+    sent = {}
+    fake = <span class="k">lambda</span> p: sent.setdefault(<span class="s">"path"</span>, p) <span class="k">or</span> <span class="s">""</span>
+    monkeypatch.setattr(<span class="s">"files.export.send_file"</span>, fake)
+    client.get(<span class="s">"/export?file=../../etc/passwd"</span>)
+    <span class="c"># passe aujourd'hui, échoue une fois la faille corrigée</span>
+    <span class="k">assert</span> <span class="hl">sent["path"].endswith("etc/passwd")</span></pre>
+  <div class="note"><b>Mesurer l'agent :</b> <code>rempart agent-eval</code> le fait passer sur 9 petits dépôts étiquetés : 7 vraies failles, 5 pièges (liste blanche dans un helper, nettoyage dans un autre fichier, appelants toujours constants). Il donne le taux d'accord, les vraies failles conservées et les faux positifs écartés.</div>
+  <div class="num">17</div>
+</section>
+
 <!-- 15. PISTES -->
 <section class="page">
   <div class="tag">La suite</div>
@@ -532,23 +621,23 @@ rempart history        <span class="c"># évolution de la note, nouveaux / corri
   <svg viewBox="0 0 720 40" width="100%"><rect x="0" y="16" width="720" height="8" rx="4" fill="#e3e6eb"/><circle cx="60" cy="20" r="10" fill="#6d4aff"/><circle cx="360" cy="20" r="10" fill="#2a78d6"/><circle cx="660" cy="20" r="10" fill="#12805c"/></svg>
   <div class="grid3">
     <div class="card"><span class="pill p-brand">1–2 mois</span><h3>Profondeur</h3><p>
-      <b>Mode baseline</b> : ne montrer que ce qu'une PR ajoute.<br><br>
-      <b>Secrets dans l'historique git</b> : les clés supprimées restent récupérables.<br><br>
-      <b>Graphe par ressource</b> : relier « ce groupe de sécurité protège cette instance qui exécute cette image ».<br><br>
-      <b>Corpus d'évaluation de l'agent</b> : mesurer sa précision règle par règle.</p></div>
+      <b>Flux JS/TS entre modules</b> : suivre les imports comme en Python.<br><br>
+      <b>Lier le cloud observé au dépôt</b> : rattacher une instance réelle à sa ressource Terraform et à son image.<br><br>
+      <b>Chemins confirmés par l'agent</b>, avec test de preuve.<br><br>
+      <b>Mesurer l'agent</b> avec une vraie clé et publier le score par modèle.</p></div>
     <div class="card"><span class="pill p-blue">3–6 mois</span><h3>Largeur</h3><p>
-      <b>GCP et Azure en direct</b>, comme AWS.<br><br>
-      <b>Flux entre fonctions</b> : résumés « paramètre → puits ».<br><br>
-      <b>Images RPM, binaires Go, JAR</b>.<br><br>
-      <b>Politique « cooldown »</b> : refuser un paquet publié il y a moins de N jours, la seule parade aux vers avec provenance valide.</p></div>
+      <b>Plus de contrôles GCP et Azure</b> (journaux, KMS, GKE, AKS).<br><br>
+      <b>RPM ancien format</b> (RHEL 7/8) et flux d'avis Red Hat.<br><br>
+      <b>Kubernetes</b> : politiques d'admission, NetworkPolicy.<br><br>
+      <b>Politique « cooldown »</b> : refuser un paquet publié il y a moins de N jours.</p></div>
     <div class="card"><span class="pill p-ok">6–12 mois</span><h3>Produit</h3><p>
-      <b>Publication PyPI</b> et pre-commit.<br><br>
+      <b>Publication PyPI</b> : le workflow est prêt, il suffit d'un tag <code>v0.3.0</code>.<br><br>
+      <b>Image Docker</b> de Rempart, minimale et non-root.<br><br>
       <b>Tableau de bord web</b> multi-projets avec historique.<br><br>
-      <b>Scans planifiés</b> : un agent qui tourne chaque nuit et ouvre des PR de correctif.<br><br>
       <b>Version équipe</b> : calibration partagée, intégration Slack, SSO.</p></div>
   </div>
-  <div class="note"><b>Pour ta carrière :</b> chaque piste est un sujet d'entrevue. Le graphe d'attaque parle aux équipes cloud, le flux entre fonctions aux équipes AppSec, le tableau de bord aux équipes produit.</div>
-  <div class="num">15</div>
+  <div class="note"><b>Pour ta carrière :</b> chaque piste est un sujet d'entrevue. Le graphe de ressources parle aux équipes cloud, le flux entre modules aux équipes AppSec, le tableau de bord aux équipes produit.</div>
+  <div class="num">18</div>
 </section>
 
 <!-- 16. AIDE-MÉMOIRE -->
@@ -559,18 +648,21 @@ rempart history        <span class="c"># évolution de la note, nouveaux / corri
   <table>
     <tr><th style="width:52%">Commande</th><th>Ce qu'elle fait</th></tr>
     <tr><td><code>rempart scan .</code></td><td>scanne le dépôt courant</td></tr>
-    <tr><td><code>rempart scan . -v</code></td><td>avec le correctif et les référentiels</td></tr>
     <tr><td><code>rempart scan . -f html -o rapport.html</code></td><td>rapport HTML filtrable</td></tr>
     <tr><td><code>rempart scan . --fail-on high</code></td><td>code de sortie 1 s'il y a du « high » (CI)</td></tr>
     <tr><td><code>rempart scan . --aws --image app:latest</code></td><td>code + AWS + image, corrélés</td></tr>
     <tr><td><code>rempart scan . --verify-secrets</code></td><td>teste si les clés trouvées marchent encore</td></tr>
     <tr><td><code>rempart image python:3.12-slim</code></td><td>analyse une image sans Docker</td></tr>
     <tr><td><code>rempart cloud aws --profile prod</code></td><td>audit AWS en direct</td></tr>
+    <tr><td><code>rempart cloud gcp</code> · <code>rempart cloud azure</code></td><td>audit GCP / Azure en direct</td></tr>
+    <tr><td><code>rempart scan . --baseline origin/main</code></td><td>seulement ce que la branche ajoute</td></tr>
+    <tr><td><code>rempart scan . --git-history</code></td><td>secrets restés dans l'historique</td></tr>
+    <tr><td><code>rempart watch .</code></td><td>rescan à chaque modification</td></tr>
+    <tr><td><code>rempart agent-eval</code></td><td>mesurer l'agent IA</td></tr>
     <tr><td><code>rempart k8s --context prod</code></td><td>audit du cluster</td></tr>
     <tr><td><code>rempart web https://carriv.com</code></td><td>audit passif de ton site</td></tr>
     <tr><td><code>rempart agent .</code></td><td>l'IA vérifie et propose des correctifs</td></tr>
-    <tr><td><code>rempart triage &lt;id&gt; --fp | --tp | --accept</code></td><td>apprendre à l'outil</td></tr>
-    <tr><td><code>rempart learn</code> · <code>rempart history</code></td><td>ce qu'il a appris · ta progression</td></tr>
+    <tr><td><code>rempart triage &lt;id&gt; --fp</code> · <code>history</code></td><td>apprendre à l'outil (--fp, --tp, --accept) · ta progression</td></tr>
     <tr><td><code>rempart mcp</code></td><td>serveur pour assistants de code IA</td></tr>
     <tr><td><code>rempart rules --domain data</code></td><td>liste des règles d'un domaine</td></tr>
   </table>
@@ -580,7 +672,7 @@ rempart history        <span class="c"># évolution de la note, nouveaux / corri
 exclude = ["fixtures/**"]
 fail_on = "high"</pre></div>
   </div>
-  <div class="num">16</div>
+  <div class="num">19</div>
 </section>
 
 </body>

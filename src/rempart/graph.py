@@ -129,6 +129,7 @@ def build_graph(files: Iterable[str], read: Callable[[str], str | None]) -> Reso
             node = f"docker:{d or '.'}"
             g.add_node(node, f"image built from {d or '.'}/")
             g.owners.append((d, node))
+    _image_links(g, files, read)
     # a compose service and the Dockerfile it builds are the same deployable
     by_prefix: dict[str, list[str]] = {}
     for prefix, node in g.owners:
@@ -137,6 +138,63 @@ def build_graph(files: Iterable[str], read: Callable[[str], str | None]) -> Reso
         for a in nodes[1:]:
             g.connect(nodes[0], a)
     return g
+
+
+_BUILD_TAG = re.compile(r"(?:docker|podman)\s+(?:buildx\s+)?build\b([^\n]*)")
+_TAG = re.compile(r"(?:-t|--tag)[ =]['\"]?([\w./-]+)")
+
+
+def _repo(image: str) -> str:
+    """'ghcr.io/acme/api:1.2@sha256:..' -> 'ghcr.io/acme/api'."""
+    image = image.split("@")[0]
+    last = image.rsplit("/", 1)
+    if ":" in last[-1]:
+        image = image[: image.rfind(":")]
+    return image.strip("'\"")
+
+
+def _image_links(g: ResourceGraph, files: list[str], read: Callable[[str], str | None]) -> None:
+    """Connect the place an image is built to every place that runs it (k8s, compose, Terraform user_data)."""
+    builders: dict[str, str] = {}
+    for rel in files:
+        base = os.path.basename(rel)
+        if not (rel.endswith((".yml", ".yaml", ".sh", ".mk")) or base in ("Makefile", "Justfile", "Taskfile")):
+            continue
+        text = read(rel) or ""
+        for m in _BUILD_TAG.finditer(text):
+            args = m.group(1)
+            tag = _TAG.search(args)
+            if not tag:
+                continue
+            ctx_dir = args.split()[-1] if args.split() else "."
+            ctx_dir = "." if ctx_dir.startswith("-") or ctx_dir.startswith("$") else ctx_dir
+            d = _join(os.path.dirname(rel) if not rel.startswith(".github/") else "", ctx_dir)
+            node = f"docker:{d or '.'}"
+            g.add_node(node, f"image built from {d or '.'}/")
+            if (d, node) not in g.owners:
+                g.owners.append((d, node))
+            builders[_repo(tag.group(1))] = node
+    # compose services that both build and name an image
+    for rel in files:
+        if re.fullmatch(r"(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml", os.path.basename(rel)):
+            try:
+                doc = yaml.safe_load(read(rel) or "")
+            except yaml.YAMLError:
+                continue
+            for name, svc in ((doc or {}).get("services") or {}).items() if isinstance(doc, dict) else []:
+                if isinstance(svc, dict) and svc.get("image") and svc.get("build"):
+                    builders.setdefault(_repo(str(svc["image"])), f"compose:{rel}:{name}")
+    if not builders:
+        return
+    names = sorted(builders, key=len, reverse=True)
+    pattern = re.compile(r"(?<![\w./-])(" + "|".join(re.escape(n) for n in names) + r")(?=[:@\s'\"]|$)", re.M)
+    for rel, spans in list(g.spans.items()):
+        text = read(rel) or ""
+        lines = text.splitlines()
+        for start, end, node in spans:
+            chunk = "\n".join(lines[max(0, start - 1):end])
+            for m in pattern.finditer(chunk):
+                g.connect(node, builders[m.group(1)])
 
 
 def _terraform(g: ResourceGraph, tf_files: list[str], read: Callable[[str], str | None]) -> None:

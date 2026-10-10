@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rempart"
-version = "0.2.0"
+version = "0.3.0"
 description = "Security, data and cloud posture scanner with an AI verification agent: code, secrets, dependencies (OSV + KEV + EPSS), container images, live AWS and Kubernetes, IaC, CI/CD, data stores and AI agents, correlated into attack paths."
 readme = "README.md"
 license = { text = "MIT" }

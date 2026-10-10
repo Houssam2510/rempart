@@ -42,7 +42,7 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
         by_domain.setdefault(f.rule.domain, []).append(f)
     printed = 0
     collapsed = 0
-    for domain, items in sorted(by_domain.items(), key=lambda kv: -max(x.risk for x in kv[1])):
+    for domain, items in sorted(by_domain.items(), key=lambda kv: (kv[0] != "attack-path", -max(x.risk for x in kv[1]))):
         if printed >= limit:
             break
         out.append(col(f"■ {domain} ({len(items)})", BOLD))
@@ -68,7 +68,12 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
             tag = col(f" {f.severity.name[:4]} ", COLORS[f.severity])
             loc = f"{f.path}:{f.line}" if f.line else f.path
             out.append(f"  {tag} {f.rule.title}  {col(loc, DIM)}")
-            out.append(f"         {f.message}")
+            route = f.extra.get("route") if f.rule.domain == "attack-path" else None
+            if route:
+                out.append(f"         {f.message.split(' Connected through:')[0].split(' Links →')[0]}")
+                out.append(col(f"         linked: {' ; '.join(route)}", COLORS[Severity.LOW]))
+            else:
+                out.append(f"         {f.message}")
             if verbose:
                 if f.rule.remediation:
                     out.append(col(f"         fix: {f.rule.remediation}", DIM))
