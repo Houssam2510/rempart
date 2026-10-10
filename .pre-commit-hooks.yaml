@@ -1,0 +1,20 @@
+# Use from another repository's .pre-commit-config.yaml:
+#   - repo: https://github.com/Houssam2510/rempart
+#     rev: v0.3.0
+#     hooks:
+#       - id: rempart-secrets   # fast: credentials only
+#       - id: rempart           # secrets + code, blocks on high and above
+- id: rempart-secrets
+  name: rempart (secrets)
+  entry: rempart scan . --offline --no-history --only secrets --fail-on high --limit 20
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit, pre-push]
+- id: rempart
+  name: rempart (secrets and code)
+  entry: rempart scan . --offline --no-history --only secrets,code --fail-on high --limit 20
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-push]

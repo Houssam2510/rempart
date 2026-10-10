@@ -1,5 +1,5 @@
 name: Rempart security scan
-description: Security, data and cloud posture scan (SAST, secrets, OSV/KEV/EPSS dependencies, IaC, Kubernetes, CI/CD, data, AI agents) with SARIF output.
+description: Security, data and cloud posture scan (SAST with data flow, secrets, OSV/KEV/EPSS dependencies, IaC, Kubernetes, CI/CD, data, AI agents) with SARIF output and an optional pull-request comment.
 branding:
   icon: shield
   color: purple
@@ -13,6 +13,21 @@ inputs:
   sarif:
     description: Where to write the SARIF report
     default: "rempart.sarif"
+  baseline:
+    description: >-
+      Only report findings that are not already present at this git ref. "auto" uses the pull request's target branch
+      (needs actions/checkout with fetch-depth 0). Empty to report everything.
+    default: "auto"
+  comment:
+    description: "Post (or update) a summary comment on the pull request. Needs `pull-requests: write`."
+    default: "false"
+  github-token:
+    description: Token used for the pull-request comment
+    default: ${{ github.token }}
+outputs:
+  sarif:
+    description: Path of the SARIF report
+    value: ${{ inputs.sarif }}
 runs:
   using: composite
   steps:
@@ -25,7 +40,33 @@ runs:
         SCAN_PATH: ${{ inputs.path }}
         FAIL_ON: ${{ inputs.fail-on }}
         SARIF_OUT: ${{ inputs.sarif }}
+        BASELINE: ${{ inputs.baseline }}
+        BASE_REF: ${{ github.base_ref }}
       run: |
-        args=(scan "$SCAN_PATH" --no-history --format sarif --output "$SARIF_OUT")
+        args=(scan "$SCAN_PATH" --no-history --format sarif --output "$SARIF_OUT" --also "md:${RUNNER_TEMP}/rempart.md")
+        if [ "$BASELINE" = "auto" ] && [ -n "$BASE_REF" ]; then
+          git fetch --no-tags --depth=1 origin "$BASE_REF" >/dev/null 2>&1 || true
+          args+=(--baseline "origin/${BASE_REF}")
+        elif [ -n "$BASELINE" ] && [ "$BASELINE" != "auto" ]; then
+          args+=(--baseline "$BASELINE")
+        fi
         if [ -n "$FAIL_ON" ]; then args+=(--fail-on "$FAIL_ON"); fi
+        set +e
         rempart "${args[@]}"
+        status=$?
+        set -e
+        echo "REMPART_STATUS=$status" >> "$GITHUB_ENV"
+        cat "${RUNNER_TEMP}/rempart.md" >> "$GITHUB_STEP_SUMMARY"
+    - name: Comment on the pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        { echo "<!-- rempart -->"; cat "${RUNNER_TEMP}/rempart.md"; } > "${RUNNER_TEMP}/comment.md"
+        gh pr comment "$PR" --edit-last --body-file "${RUNNER_TEMP}/comment.md" 2>/dev/null \
+          || gh pr comment "$PR" --body-file "${RUNNER_TEMP}/comment.md"
+    - name: Result
+      shell: bash
+      run: exit "${REMPART_STATUS:-0}"

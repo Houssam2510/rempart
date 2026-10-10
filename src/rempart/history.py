@@ -15,6 +15,7 @@ the machine: the database lives in REMPART_HOME (default ~/.local/share/rempart)
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -63,6 +64,25 @@ class RuleStats:
         return (self.tp + a) / (self.tp + self.fp + a + b)
 
 
+_CONTEXTS = (
+    ("test", re.compile(r"(?i)(?:^|/)(?:tests?|__tests__|spec|e2e|fixtures?|mocks?)/|[._-](?:test|spec)\.\w+$|(?:^|/)test_[^/]+\.py$")),
+    ("docs", re.compile(r"(?i)(?:^|/)(?:docs?|examples?|samples?|demo)/|\.(?:md|mdx|rst|txt)$")),
+    ("scripts", re.compile(r"(?i)(?:^|/)(?:scripts?|tools?|bin|seeds?|migrations?)/")),
+    ("ci", re.compile(r"(?i)(?:^|/)\.(?:github|gitlab|circleci)/|(?:^|/)(?:Jenkinsfile|\.gitlab-ci\.yml|azure-pipelines\.yml)$")),
+    ("infra", re.compile(r"(?i)\.(?:tf|tfvars|hcl)$|(?:^|/)(?:k8s|kubernetes|helm|charts?|deploy|infra|terraform)/|(?:docker-)?compose[\w.-]*\.ya?ml$|Dockerfile")),
+    ("cloud", re.compile(r"^(?:aws|gcp|azure|k8s)://")),
+    ("frontend", re.compile(r"(?i)\.(?:jsx|tsx|vue|svelte|astro|html)$|(?:^|/)(?:components|pages|app|public|static|client|frontend|web)/")),
+    ("dependencies", re.compile(r"(?i)(?:lock|requirements[\w.-]*\.txt|go\.mod|package\.json)$")),
+)
+
+
+def path_context(path: str) -> str:
+    for name, rx in _CONTEXTS:
+        if rx.search(path):
+            return name
+    return "code"
+
+
 class History:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (home() / "rempart.db")
@@ -88,10 +108,31 @@ class History:
         ).fetchall()
         return {r[0]: RuleStats(r[0], r[1] or 0, r[2] or 0, r[3] or 0) for r in rows}
 
+    def context_stats(self) -> dict[tuple[str, str], RuleStats]:
+        """The same counts split by where the finding was: a rule can be precise in
+        application code and noisy in scripts or infrastructure."""
+        rows = self.db.execute(
+            "SELECT v.rule_id, v.verdict, v.source,"
+            " (SELECT f.path FROM findings f WHERE f.fingerprint = v.fingerprint ORDER BY f.scan_id DESC LIMIT 1)"
+            " FROM verdicts v").fetchall()
+        out: dict[tuple[str, str], RuleStats] = {}
+        for rule_id, verdict, source, path in rows:
+            key = (rule_id, path_context(path or ""))
+            st = out.setdefault(key, RuleStats(rule_id, 0, 0, 0))
+            w = AI_WEIGHT if source == "ai" else 1.0
+            if verdict == "tp":
+                st.tp += w
+            elif verdict == "fp":
+                st.fp += w
+            else:
+                st.accepted += w
+        return out
+
     def apply_knowledge(self, project: str, findings: list[Finding]) -> tuple[list[Finding], int]:
         """Suppress triaged noise and recalibrate confidence. Returns (kept, suppressed)."""
         closed = self._closed(project)
         stats = self.rule_stats()
+        by_context = self.context_stats()
         kept: list[Finding] = []
         for f in findings:
             if f.fingerprint in closed:
@@ -99,8 +140,17 @@ class History:
             s = stats.get(f.rule.id)
             if s and (s.tp + s.fp) > 0:
                 p = s.precision(prior=f.rule.confidence)
+                ctx = path_context(f.path)
+                cs = by_context.get((f.rule.id, ctx))
+                if cs and (cs.tp + cs.fp) >= 2:
+                    # the rule-wide estimate is the prior for this kind of file
+                    p = cs.precision(prior=min(0.97, max(0.03, p)))
+                    s = cs
+                    where = f" in {ctx} files"
+                else:
+                    where = ""
                 f.confidence = round(p, 2)
-                f.learned_note = f"learned precision {p:.0%} from {s.tp} TP / {s.fp} FP"
+                f.learned_note = f"learned precision {p:.0%}{where} from {s.tp:g} TP / {s.fp:g} FP"
                 if s.fp >= 5 and p < 0.25 and f.severity is not None:
                     f.severity = f.severity.lower()
                     f.learned_note += ", severity lowered"

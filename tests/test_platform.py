@@ -73,6 +73,25 @@ class LearningTest(unittest.TestCase):
         self.assertLess(kept[0].confidence, REGISTRY["CODE-EVAL"].confidence)
         hist.close()
 
+    def test_learning_is_per_kind_of_file(self):
+        files = {f"scripts/s{i}.js": f"eval(a{i});\n" for i in range(3)}
+        files.update({"src/app.js": "eval(req.query.x);\n", "src/other.js": "eval(req.body.y);\n"})
+        res = scan_tree(files, ["code"])
+        hist = History(Path(self.home) / "c.db")
+        project = res.root
+        hist.record(project, res)
+        for f in res.findings:
+            if f.path.startswith("scripts/s0") or f.path.startswith("scripts/s1"):
+                hist.triage(project, f.fingerprint, "fp")
+            if f.path == "src/other.js":
+                hist.triage(project, f.fingerprint, "tp")
+        kept, _ = hist.apply_knowledge(project, list(res.findings))
+        script = next(f for f in kept if f.path == "scripts/s2.js")
+        app = next(f for f in kept if f.path == "src/app.js")
+        self.assertIn("in scripts files", script.learned_note)
+        self.assertLess(script.confidence, app.confidence)
+        hist.close()
+
     def test_cli_end_to_end(self):
         root = tempfile.mkdtemp()
         Path(root, "app.py").write_text("import os\nfrom flask import request\nos.system('rm ' + request.args['f'])\n")

@@ -107,6 +107,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
     else:
         result.add_attack_paths()
 
+    for spec in args.also or []:
+        fmt, _, dest = spec.partition(":")
+        if fmt not in RENDERERS or not dest:
+            print(f"rempart: --also expects FORMAT:PATH with FORMAT in {sorted(RENDERERS)}, got {spec!r}", file=sys.stderr)
+            return 2
+        Path(dest).write_text(RENDERERS[fmt](result), encoding="utf-8")
     if args.format == "console":
         print(render_console(result, limit=args.limit, min_severity=Severity.parse(args.min_severity), diff=diff, verbose=args.verbose))
     else:
@@ -394,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("path", nargs="?", default=".")
     s.add_argument("-f", "--format", choices=["console", "json", "sarif", "md", "markdown", "html"], default="console")
     s.add_argument("-o", "--output", help="write the report to a file")
+    s.add_argument("--also", action="append", metavar="FORMAT:PATH", help="also write another format from the same scan, e.g. md:report.md (repeatable)")
     s.add_argument("--only", help="comma-separated scanners to run")
     s.add_argument("--skip", help="comma-separated scanners to skip")
     s.add_argument("--offline", action="store_true", help="no network: skip OSV/KEV/EPSS lookups")
