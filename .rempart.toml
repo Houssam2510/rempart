@@ -1,6 +1,6 @@
 # Rempart scanning Rempart.
-# tests/ and examples/ hold intentionally vulnerable code: scanning them would only prove the tests work.
-exclude = ["tests/**", "examples/**"]
+# tests/, examples/ and the bench corpus hold intentionally vulnerable code: scanning them would only prove the tests work.
+exclude = ["tests/**", "examples/**", "src/rempart/corpus/bench/**"]
 
 [severity]
 # Scanner modules are flat rule tables (one `if` per check, no nesting). Cyclomatic

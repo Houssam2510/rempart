@@ -1,0 +1,5 @@
+customer,card,amount
+# rempart-expect: DATA-PAYMENT-CARD
+alice,4539148803436467,19.99
+# rempart-safe: DATA-PAYMENT-CARD
+order-ref,1234567812345678,5.00

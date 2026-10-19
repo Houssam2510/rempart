@@ -47,7 +47,7 @@ R_SUSPICIOUS_RULES = rule("AI-INJECTED-RULE-FILE", "Agent instruction file conta
                           confidence=0.6)
 R_OUTPUT_SINK = rule("AI-OUTPUT-TO-SINK", "Model output flows into a code, shell, HTML or SQL sink", H, "ai", cwe=("CWE-94", "CWE-79", "CWE-89"), owasp=A05, frameworks=(LLM05, ASI05),
                      fix="Treat model output as untrusted input: validate against a schema, escape for the target context, never eval/exec it.",
-                     confidence=0.6)
+                     confidence=0.6, version=2)
 R_PROMPT_CONCAT = rule("AI-PROMPT-INJECTION-SURFACE", "Untrusted input concatenated into the system prompt", M, "ai", cwe="CWE-77", owasp=A05, frameworks=(LLM01, ASI01),
                        fix="Keep the system prompt static. Put user/retrieved content in a separate user message, delimit it, and never grant it authority over tools.",
                        confidence=0.5)
@@ -81,7 +81,7 @@ EXFIL = re.compile(
     r"|(?:do not|don't|never)\s+(?:tell|mention|inform|reveal\s+(?:this\s+)?to)\s+the\s+user"
 )
 
-_LLM_OUT = r"(?:choices\[0\]\.message\.content|\.output_text|completion\.content|response\.content\[0\]\.text|\.text\(\)|result\.content|llm_output|model_output|ai_response|generated_code|completion\b)"
+_LLM_OUT = r"(?:choices\[0\]\.message\.content|\.output_text|completion\.content|\.content\[0\]\.text|\.text\(\)|result\.content|llm_output|model_output|ai_response|generated_code|completion\b)"
 _SINKS = r"(?:\beval\s*\(|\bexec\s*\(|new\s+Function\s*\(|\.innerHTML\s*=|dangerouslySetInnerHTML|\{@html|v-html|subprocess\.|os\.system\(|child_process|execSync\(|\.execute\(|\$queryRawUnsafe\()"
 LLM_CALL = re.compile(r"\b(?:chat\.completions\.create|responses\.create|messages\.create|generateContent|generateText|streamText|ChatCompletion\.create)\s*\(")
 
@@ -97,6 +97,31 @@ def _mcp_servers(doc: Any) -> dict[str, Any]:
     if isinstance(mcp, dict) and isinstance(mcp.get("servers"), dict):
         return mcp["servers"]
     return {}
+
+
+# Calls that return a model response object, whose fields then hold model output.
+_LLM_RESPONSE = re.compile(r"\.(?:messages|chat\.completions|completions|responses)\.create\(|\bgenerateText\(|\bgenerate_content\(|\.invoke\(|\bcompletion\(")
+_ASSIGN_TO = re.compile(r"^\s*(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*(?::\s*[\w\[\]|. ]+)?\s*=(?!=)\s*(.+)$")
+
+
+def _model_output_names(lines: list[str]) -> dict[str, int]:
+    """Variables of one file that hold model output, with the line that assigned them:
+    `msg = client.messages.create(...)` then `cmd = msg.content[0].text`, and one more
+    step of propagation (`full = f"{cmd} --yes"`, `cmd.strip()`)."""
+    responses: dict[str, int] = {}
+    out: dict[str, int] = {}
+    for i, line in enumerate(lines, 1):
+        m = _ASSIGN_TO.match(line)
+        if not m:
+            continue
+        name, rhs = m.group(1), m.group(2)
+        if _LLM_RESPONSE.search(rhs):
+            responses[name] = i
+        elif re.search(_LLM_OUT, rhs) or any(re.search(rf"\b{re.escape(r)}\s*(?:\.|\[)", rhs) for r in responses):
+            out[name] = i
+        elif any(re.search(rf"\b{re.escape(v)}\b", rhs) for v in out):
+            out[name] = i
+    return out
 
 
 class AIScanner:
@@ -167,11 +192,18 @@ class AIScanner:
         if not re.search(r"(?i)openai|anthropic|langchain|llamaindex|@ai-sdk|ai/rsc|google\.genai|generativeai|ollama|mistral|litellm|bedrock|\bmcp\b|tool\(", text):
             return
         lines = text.splitlines()
+        model_vars = _model_output_names(lines)
+        uses = re.compile(r"\b(" + "|".join(map(re.escape, sorted(model_vars))) + r")\b") if model_vars else None
         for i, line in enumerate(lines, 1):
             if is_comment(line) or len(line) > 1500:
                 continue
-            if re.search(_LLM_OUT, line) and re.search(_SINKS, line):
-                yield Finding(R_OUTPUT_SINK, rel, i, "LLM output reaches a dangerous sink on this line.", snippet=line.strip()[:200])
+            if re.search(_SINKS, line):
+                if re.search(_LLM_OUT, line):
+                    yield Finding(R_OUTPUT_SINK, rel, i, "LLM output reaches a dangerous sink on this line.", snippet=line.strip()[:200])
+                elif uses and (u := uses.search(line.split("=", 1)[-1] if re.match(r"\s*\w+\s*=[^=]", line) else line)) \
+                        and model_vars[u.group(1)] < i:
+                    yield Finding(R_OUTPUT_SINK, rel, i, f"`{u.group(1)}` holds model output (line {model_vars[u.group(1)]}) and reaches a dangerous sink.",
+                                  snippet=line.strip()[:200], extra={"dataflow": "tainted"})
             if re.search(r"role[\"']?\s*:\s*[\"']system[\"']", line) or re.search(r"\bsystem(?:_prompt|Prompt)?\s*[=:]", line):
                 window = " ".join(lines[i - 1:i + 3])
                 if re.search(r"(?:\$\{|\{|\+\s*)\s*(?:req|request|body|input|user(?:Input|_input|Message|_message)?|query|params|message)\b", window) and re.search(r"`|f[\"']|\+|format\(", window):

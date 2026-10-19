@@ -50,7 +50,7 @@ R_INSECURE_REGISTRY = rule("SUPPLY-INSECURE-REGISTRY", "Packages fetched over pl
                            fix="Use https:// registry URLs and keep integrity hashes in the lockfile.")
 R_TYPOSQUAT = rule("SUPPLY-TYPOSQUAT", "Dependency name one edit away from a popular package", H, "supply-chain", cwe="CWE-1357", owasp=A03,
                    fix="Check the name character by character. If it is not the package you meant, remove it and treat the machine as compromised.",
-                   confidence=0.45)
+                   confidence=0.45, version=2)
 R_OSV_DOWN = rule("DEP-LOOKUP-SKIPPED", "Vulnerability lookup skipped", I, "dependencies",
                   fix="Run again with network access to query OSV.dev.", confidence=1.0)
 
@@ -418,14 +418,16 @@ class DependencyScanner:
                         yield Finding(R_CONFUSION, rel, i, "--extra-index-url lets a public package shadow a private one with the same name.", snippet=line.strip())
                     if re.search(r"--(?:index-url|extra-index-url|trusted-host)\s+http://|index-url\s*=\s*http://", line):
                         yield Finding(R_INSECURE_REGISTRY, rel, i, "Python packages fetched over HTTP.", snippet=line.strip())
-                    if base.startswith("requirements") and (m := re.match(r"^\s*([A-Za-z0-9][\w.\-]*)\s*(?:$|[<>~!]=?|\[)", line)):
-                        name = m.group(1).lower()
+                    req = re.match(r"^\s*([A-Za-z0-9][\w.\-]*)\s*(?:$|[<>~!=]=?|\[|;)", line) if base.startswith("requirements") else None
+                    if req:
+                        name = req.group(1).lower()
                         if name not in POPULAR_PYPI:
                             for pop in POPULAR_PYPI:
                                 if _dl1(name, pop):
                                     yield Finding(R_TYPOSQUAT, rel, i, f"`{name}` is one edit away from the popular package `{pop}`.", snippet=line.strip())
                                     break
-                        yield Finding(R_UNPINNED, rel, i, f"{m.group(1)} has no exact version pin.", snippet=line.strip(), severity=Severity.LOW)
+                        if not re.search(r"===?\s*[\w.]+", line):
+                            yield Finding(R_UNPINNED, rel, i, f"{req.group(1)} has no exact version pin.", snippet=line.strip(), severity=Severity.LOW)
             if base in (".npmrc", ".yarnrc", ".yarnrc.yml"):
                 for i, line in enumerate(ctx.lines(rel), 1):
                     if re.search(r"registry\s*[=:]\s*[\"']?http://|npmRegistryServer\s*:\s*[\"']?http://", line):

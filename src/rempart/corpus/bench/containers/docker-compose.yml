@@ -1,0 +1,20 @@
+services:
+  agent:
+    image: example/agent:1.4.2
+    volumes:
+# rempart-expect: COMPOSE-DOCKER-SOCKET
+      - /var/run/docker.sock:/var/run/docker.sock
+  builder:
+    image: example/builder:2.0.1
+# rempart-expect: COMPOSE-PRIVILEGED
+    privileged: true
+  cache:
+    image: redis:7.2.4
+    ports:
+# rempart-safe: COMPOSE-DATA-PORT-PUBLISHED
+      - "127.0.0.1:6379:6379"
+  db:
+    image: postgres:16.2
+    ports:
+# rempart-expect: COMPOSE-DATA-PORT-PUBLISHED
+      - "5432:5432"

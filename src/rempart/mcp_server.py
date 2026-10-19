@@ -36,7 +36,9 @@ TOOLS: list[dict[str, Any]] = [
     {"name": "rempart_finding", "description": "Full details, remediation and framework mappings for one finding id from the last scan.",
      "inputSchema": _schema({"id": {"type": "string"}}, ["id"])},
     {"name": "rempart_triage", "description": "Record a verdict on a finding so Rempart learns (tp = true positive, fp = false positive, accepted = real but accepted risk).",
-     "inputSchema": _schema({"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["tp", "fp", "accepted"]}, "note": {"type": "string"}}, ["id", "verdict"])},
+     "inputSchema": _schema({"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["tp", "fp", "accepted"]}, "note": {"type": "string"},
+                             "because": {"type": "string", "description": "For fp: the reason as sanitizer:FUNCTION_NAME, recorded as a proposal the developer accepts with `rempart learn --accept-proposals`."}},
+                            ["id", "verdict"])},
     {"name": "rempart_web_audit", "description": "Passive audit of a website you own: TLS, security headers, cookies, CORS, performance. Sends no attack payloads.",
      "inputSchema": _schema({"url": {"type": "string"}}, ["url"])},
     {"name": "rempart_image_scan", "description": "Scan a container image (registry reference or local docker-save tar) for vulnerable packages, EOL OS/runtime, secrets and config issues.",
@@ -97,7 +99,24 @@ def tool_triage(args: dict[str, Any]) -> str:
         hist.triage(_LAST["result"].root, f.fingerprint, str(args["verdict"]), str(args.get("note") or ""))
     finally:
         hist.close()
-    return f"recorded {args['verdict']} for {f.rule.id} at {f.path}:{f.line}"
+    out = f"recorded {args['verdict']} for {f.rule.id} at {f.path}:{f.line}"
+    because = str(args.get("because") or "")
+    if because and args["verdict"] != "tp":
+        from pathlib import Path
+
+        from rempart.knowledge import Knowledge
+
+        kind, _, value = because.partition(":")
+        root = Path(_LAST["result"].root)
+        knowledge = Knowledge.load(root)
+        try:
+            # an assistant's reason is a proposal: only the developer turns it into knowledge
+            out += "; " + knowledge.learn(kind.strip(), value.strip(), f.rule.id, f"{f.path}:{f.line} (assistant)", proposed=True)
+        except ValueError as exc:
+            out += f"; reason not recorded: {exc}"
+        else:
+            knowledge.save(root)
+    return out
 
 
 def tool_web(args: dict[str, Any]) -> str:

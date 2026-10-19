@@ -124,7 +124,8 @@ def blocks(text: str) -> Iterator[Block]:
             elif ch == "}":
                 depth -= 1
             i += 1
-        yield Block(m.group(1), m.group(2) or "", m.group(3) or "", text[m.end():i - 1], m.start())
+        # m.start(1), not m.start(): the leading \s* also matches blank lines above the block
+        yield Block(m.group(1), m.group(2) or "", m.group(3) or "", text[m.end():i - 1], m.start(1))
 
 
 def attr(body: str, name: str) -> str | None:

@@ -1,0 +1,17 @@
+// rempart-expect-file: SUPPLY-NO-LOCKFILE
+{
+  "name": "shop",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "vite build",
+// rempart-safe: SUPPLY-INSTALL-SCRIPT
+    "prepare": "husky install"
+  },
+  "dependencies": {
+// rempart-safe: SUPPLY-TYPOSQUAT
+    "lodash": "4.17.21",
+// rempart-expect: SUPPLY-TYPOSQUAT
+    "lodahs": "1.0.0",
+    "express": "4.19.2"
+  }
+}

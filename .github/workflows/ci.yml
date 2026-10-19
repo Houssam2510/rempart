@@ -27,6 +27,8 @@ jobs:
         run: |
           python -m unittest discover -s tests -t . -v 2>&1 | tee test.log
           ! grep -E "skipped '(boto3|anthropic|botocore)" test.log
+      - name: Detection bench (fails on any precision or recall drop in any domain)
+        run: rempart bench --check bench/baseline.json -v
 
   dogfood:
     # Rempart scans itself on every change and publishes the result to code scanning.

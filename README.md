@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-6d4aff?style=for-the-badge"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="tests"><img alt="116 tests" src="https://img.shields.io/badge/tests-116%20passing-12805c?style=for-the-badge"></a>
+  <a href="tests"><img alt="148 tests" src="https://img.shields.io/badge/tests-148%20passing-12805c?style=for-the-badge"></a>
   <a href="docs/RULES.md"><img alt="316 rules" src="https://img.shields.io/badge/rules-316-2a78d6?style=for-the-badge"></a>
   <a href="docs/THREAT_CATALOG.md"><img alt="OWASP 2025" src="https://img.shields.io/badge/OWASP%20Top%2010-2025-14161b?style=for-the-badge"></a>
   <a href="#-measured-not-claimed"><img alt="OWASP Benchmark 99.4" src="https://img.shields.io/badge/OWASP%20Benchmark-99.4-12805c?style=for-the-badge"></a>
@@ -53,7 +53,7 @@ Every finding carries a **verification level**: pattern, data flow, imported dep
 <td width="33%" valign="top">
 
 ### 🧠 Gets sharper with use
-Mark a result true or false and each rule's precision is recalibrated across your projects, **per kind of file** (a rule noisy in scripts stays sharp in application code). An **AI agent** reads the code to confirm or reject findings, and it can never close one. Only you can.
+Mark a result true or false and each rule's precision is recalibrated, **per kind of file**. Give the reason (`--because sanitizer:clean_html`) and the **whole class** of findings goes, in every later scan. Fixes you make and inline ignores count as evidence too, and `rempart learn --eval` replays your history to show whether learning actually ranks real issues higher. An **AI agent** reads the code to confirm or reject findings, and it can never close one. Only you can.
 
 </td>
 </tr>
@@ -80,6 +80,9 @@ pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # ext
 | Find secrets deleted from files but still in git history | `rempart scan . --git-history --verify-secrets` |
 | Ignore build/test-only dependencies | `rempart scan . --prod-only` |
 | Re-scan on every change, print only the difference | `rempart watch .` |
+| Teach the reason, not just the verdict | `rempart triage <id> --fp --because sanitizer:clean_html` |
+| See what it learned, and whether learning helps on your history | `rempart learn` · `rempart learn --eval` |
+| Measure detection per domain on the labelled corpus | `rempart bench -v` |
 | Let the AI agent verify, fix and write proof tests | `rempart agent .` |
 | Measure the agent on labelled cases | `rempart agent-eval` |
 | Gate CI on severity | `rempart scan . --fail-on high -f sarif -o rempart.sarif --also md:summary.md` |
@@ -108,7 +111,7 @@ flowchart LR
 | **Live verification** | A GitHub token found in `ci.sh` is checked against `api.github.com/user`. The verdict is `VERIFIED LIVE: GitHub user octo` (CRITICAL) or `revoked` (LOW). It covers 24 providers, including AWS STS through a stdlib SigV4 signer tested byte-for-byte against botocore. |
 | **Correlation** | `CODE-SSRF` in `api/app.py` + `TF-EC2-IMDSV1` on `aws_instance.worker`, whose `user_data` runs the image built from this repo → `CHAIN-SSRF-TO-CLOUD-CREDENTIALS`, **linked**. Without that link it is reported one level lower as a co-occurrence. |
 | **AI agent** | "False positive: `eval` only receives values from the constant `OPS` table; user input selects a key (`app.py:4,8`)." |
-| **Learning** | IDOR rule: 35 % → 28 % after one false positive. Two false positives on `eval` in `scripts/` lower it there, not in `src/`. |
+| **Learning** | IDOR rule: 35 % → 28 % after one false positive. Two false positives on `eval` in `scripts/` lower it there, not in `src/`. `--fp --because sanitizer:clean_html` teaches the data-flow engines (Python and JS/TS) that `clean_html()` sanitises XSS, so every finding behind it goes. A finding that disappears after a code change counts as confirmed; one that comes back is a **regression** and is raised one level. |
 
 ## 🧨 Attack paths
 
@@ -210,8 +213,12 @@ risk = severity_weight × (0.5 + confidence / 2)
 if EPSS is known:      risk = max(risk, 0.6 × risk + 40 × EPSS)
 if CVE is in CISA KEV: risk = max(risk, 95)                 # fact beats prediction
 posture score = 100 × exp(−penalty / 120)                   # repeats of one rule weigh 1, ½, ⅓…
-precision(rule) = (TP + a) / (TP + FP + a + b)              # Beta prior from the rule's declared confidence
+precision(rule) = (TP + a) / (TP + FP + a + b)              # Beta prior from the finding's own confidence
+evidence weight  = source × 0.5^(age / 1 year) × (0.25 if it judged an older rule version)
+source           = human 1 · AI agent 0.5 · fixed in code 0.5 · inline rempart:ignore 0.5
 ```
+
+A finding counts as **fixed in code** only when it vanished between two scans run the same way (same Rempart version, options, `.rempart.toml` and learned knowledge) while its file was still scanned: nothing but the code can explain it. Otherwise it is only "no longer reported".
 
 Distribution CVEs with no fix in your release that are over three years old are kept but ranked LOW unless KEV-listed. Rules with ≥ 5 false positives and < 25 % precision drop one severity level.
 
@@ -245,11 +252,13 @@ The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contain
 | `traefik:v2.10.4` (live pull) | Go modules and toolchain read from the binary: `golang.org/x/net@v0.11.0` HTTP/2 Rapid Reset (KEV) found |
 | `rockylinux:9-minimal` (live pull) | RPM database parsed, advisories matched by source package |
 | AWS / GCP / Azure checks | 28 validated against the AWS service models (botocore Stubber); GCP and Azure against recorded CLI output |
-| Rempart on itself | 116 tests; CI fails on any high finding |
+| `rempart bench`: 22 bundled cases, every domain that reads files, 90 labelled issues + 73 traps | Precision **100 %**, recall **97.8 %**. The 2 misses are known gaps (Terraform variables, JS across modules). This corpus is a **regression gate**, not a held-out set: building it exposed 11 defects, all fixed since, so it shows that they stay fixed, not how Rempart does on code it has never seen. CI fails on any drop in any domain. |
+| Rempart on itself | 148 tests; CI fails on any high finding and on any bench regression |
 
 ## ⚠️ Limits, stated plainly
 
 - **JS/TS data flow** follows variables and functions **within a file**; Python follows functions across the whole repository. Values that cross JS modules are reached by the AI agent, not the static layer.
+- **Terraform values** are read literally: `cidr_blocks = [var.admin_cidr]` is not resolved to the variable's default yet.
 - **Links between code and cloud** are proven when the repository says what runs where (an image built here referenced by a workload, a Terraform reference). Live AWS/GCP/Azure findings are not yet tied to repository resources, so those chains stay co-occurrences.
 - **Logic flaws** (IDOR, business-flow abuse) are a review queue, not verdicts.
 - **Images**: RPM databases in the older BerkeleyDB format (RHEL 7/8) and Red Hat's own advisory feed are not covered.
@@ -257,7 +266,7 @@ The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contain
 
 ## 🛣️ Roadmap
 
-`cross-module JS/TS data flow` · `live cloud ↔ repository resource links` · `agent-confirmed attack paths` · `Docker image of Rempart` · `PyPI release` → [docs/ROADMAP.md](docs/ROADMAP.md)
+`held-out benchmarks per domain` · `Terraform evaluation and effective exposure` · `cross-module JS/TS data flow` · `live cloud ↔ repository links` · `attack paths found by search` → [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## 📚 Learn it
 

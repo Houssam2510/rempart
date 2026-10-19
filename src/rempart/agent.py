@@ -69,7 +69,8 @@ For every finding id you are given:
 1. Read the code around the finding and follow the data far enough to decide: where does the value come from, is it validated or sanitised, is the code reachable from an entry point (route, handler, CLI, job), is there a guard elsewhere (middleware, ORM scoping, framework default).
 2. Call record_verdict exactly once with:
    - confirmed: the weakness is real and reachable in this codebase;
-   - false_positive: the pattern matched but the code is safe (say exactly why: constant input, sanitiser, guard, dead code, test fixture);
+   - false_positive: the pattern matched but the code is safe (say exactly why: constant input, sanitiser, guard, dead code, test fixture).
+     When the reason is a function of this repository that sanitises the value, give its name in `sanitizer` so Rempart can learn it (a person reviews it before it applies); otherwise pass an empty string;
    - uncertain: you could not establish it either way with the files available.
    Cite file:line evidence. Prefer uncertain over guessing.
 3. When a finding is confirmed and the fix is small and local, call propose_fix with an exact snippet to replace and its replacement. Keep the change minimal and behaviour-preserving. Do not propose a fix for false positives.
@@ -106,7 +107,8 @@ TOOLS = [
           {"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["confirmed", "false_positive", "uncertain"]},
            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
            "reasoning": {"type": "string", "description": "Two to four sentences explaining the decision."},
-           "evidence": {"type": "string", "description": "file:line references you relied on."}}),
+           "evidence": {"type": "string", "description": "file:line references you relied on."},
+           "sanitizer": {"type": "string", "description": "For a false positive caused by a sanitising function of this repository: its name, such as clean_html. Empty string otherwise."}}),
     _tool("propose_fix", "Propose a minimal fix for a confirmed finding as an exact text replacement in one file. It is not applied.",
           {"id": {"type": "string"}, "path": {"type": "string"},
            "find": {"type": "string", "description": "Exact existing text, unique in the file, including indentation."},
@@ -126,6 +128,7 @@ class Verdict:
     confidence: str
     reasoning: str
     evidence: str
+    sanitizer: str = ""
 
 
 @dataclass
@@ -280,7 +283,8 @@ class VerificationAgent:
                 if args["verdict"] not in ("confirmed", "false_positive", "uncertain"):
                     raise ValueError("verdict must be confirmed, false_positive or uncertain")
                 self.report.verdicts[f.fingerprint] = Verdict(f.fingerprint, str(args["verdict"]), str(args["confidence"]),
-                                                              str(args["reasoning"]), str(args["evidence"]))
+                                                              str(args["reasoning"]), str(args["evidence"]),
+                                                              str(args.get("sanitizer") or "") if args["verdict"] == "false_positive" else "")
                 self.log(f"  {args['verdict']:<15} {f.rule.id} {f.path}:{f.line}")
                 return "recorded", False
             if name == "propose_fix":

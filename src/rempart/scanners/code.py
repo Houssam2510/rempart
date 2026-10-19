@@ -31,12 +31,12 @@ ALL_CODE = JS + PY + GO + JAVA + PHP + RB + CS + C_CPP
 R_CODE_INJ = rule("CODE-EVAL", "Dynamic code evaluation", H, "code", cwe="CWE-94", owasp=A05,
                   fix="Never evaluate strings as code. Parse data with a real parser (JSON, ast.literal_eval) or dispatch through an allow-list.")
 R_CMD_INJ = rule("CODE-CMD-INJECTION", "OS command built from dynamic input", C, "code", cwe=("CWE-78", "CWE-77"), owasp=A05,
-                 fix="Call the program with an argument list and no shell (subprocess.run([...]), execFile, exec.Command with separate args). Validate inputs against an allow-list.")
+                 fix="Call the program with an argument list and no shell (subprocess.run([...]), execFile, exec.Command with separate args). Validate inputs against an allow-list.", version=2)
 R_SHELL_TRUE = rule("CODE-SHELL-TRUE", "Subprocess started through a shell", M, "code", cwe="CWE-78", owasp=A05,
                     fix="Pass an argument list with shell=False. A shell adds a second parsing layer that turns any interpolated value into code.",
                     confidence=0.6)
 R_SQLI = rule("CODE-SQL-INJECTION", "SQL query built by string interpolation", C, "code", cwe="CWE-89", owasp=A05,
-              fix="Use parameterised queries (placeholders + bound values) or the ORM's query builder. Never interpolate values into SQL text.")
+              fix="Use parameterised queries (placeholders + bound values) or the ORM's query builder. Never interpolate values into SQL text.", version=2)
 R_NOSQLI = rule("CODE-NOSQL-INJECTION", "NoSQL query accepting raw request objects or $where", H, "code", cwe="CWE-943", owasp=A05,
                 fix="Cast every query field to the expected primitive type (String(x)), reject keys starting with `$`, and never use `$where`. Libraries such as mongo-sanitize help.")
 R_XSS = rule("CODE-XSS-SINK", "Untrusted HTML written to the DOM", M, "code", cwe="CWE-79", owasp=A05,
@@ -150,7 +150,7 @@ LINE_RULES: list[LineRule] = [
     lr(R_CODE_INJ, JS, r"\bset(?:Timeout|Interval)\s*\(\s*(?:`[^`]*\$\{|[\"'][^\"']*[\"']\s*\+)", "Timer called with a code string."),
     lr(R_CMD_INJ, JS, r"(?:(?<![\w.])|child_process\.|\bcp\.)(?:exec|execSync)\s*\(\s*(?:`[^`]*\$\{|[^,)]*\+\s*\w)", "Shell command built by interpolation."),
     lr(R_SHELL_TRUE, JS, r"\bspawn(?:Sync)?\s*\([^)]*shell\s*:\s*true", "spawn() with shell: true."),
-    lr(R_SQLI, JS + JAVA + GO + CS + PY, r"[\"'`]\s*(?:SELECT\s[^\"'`]*\sFROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^\"'`]*[\"'`]\s*\+\s*[\w(]", "SQL text concatenated with a variable."),
+    lr(R_SQLI, JS + JAVA + GO + CS, r"[\"'`]\s*(?:SELECT\s[^\"'`]*\sFROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b[^\"'`]*[\"'`]\s*\+\s*[\w(]", "SQL text concatenated with a variable."),
     lr(R_NOSQLI, JS, r"[\"']?\$where[\"']?\s*:", "MongoDB $where executes JavaScript on the server."),
     lr(R_NOSQLI, JS, r"\.(?:find|findOne|findOneAndUpdate|updateOne|updateMany|deleteOne|deleteMany|countDocuments)\(\s*(?:req|request)\.(?:body|query|params)\b", "Request object passed directly as a query filter (operator injection)."),
     lr(R_XSS, (".svelte",), r"\{@html\s", "Svelte {@html} renders unescaped markup.", unless=r"DOMPurify|sanitize|purify",
@@ -185,7 +185,7 @@ LINE_RULES: list[LineRule] = [
     lr(R_WEAK_HASH, GO, r"\b(?:md5|sha1)\.(?:New|Sum)\s*\(", "MD5/SHA-1 in use."),
     lr(R_RANDOM, GO, r"\brand\.(?:Int|Intn|Int63|Read|Uint32|Uint64)\s*\(", "math/rand used for a security value."),
     # ---- Java / Kotlin
-    lr(R_SQLI, JAVA, r"\.(?:executeQuery|executeUpdate|execute|prepareStatement|createQuery|createNativeQuery|addBatch)\s*\(\s*(?:[\"'][^\"']*[\"']\s*\+|\w+\s*\+\s*[\"']|String\.format\()", "JDBC/JPA query concatenated."),
+    lr(R_SQLI, JAVA, r"\.(?:executeQuery|executeUpdate|execute|prepareStatement|createQuery|createNativeQuery|addBatch)\s*\(\s*(?:\"(?:[^\"\\]|\\.)*\"\s*\+|\w+\s*\+\s*\"|String\.format\()", "JDBC/JPA query concatenated."),
     lr(R_DESER, JAVA, r"new\s+ObjectInputStream\s*\(|\bXMLDecoder\b|enableDefaultTyping\s*\(|activateDefaultTyping\s*\(|new\s+Yaml\s*\(\s*\)", "Unsafe Java deserialization."),
     lr(R_CMD_INJ, JAVA, r"Runtime\.getRuntime\(\)\.exec\s*\([^)]*\+", "Runtime.exec with a concatenated command."),
     lr(R_WEAK_CIPHER, JAVA, r"Cipher\.getInstance\(\s*\"(?:DES|DESede|RC2|RC4|Blowfish|AES)(?:\"|/ECB)", "Weak cipher, or AES defaulting to ECB."),
@@ -337,6 +337,21 @@ _JS_FUNC_DEF = re.compile(r"(?:\bfunction\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)"
 _JS_CLEANERS = re.compile(r"DOMPurify|sanitize|escape|encodeURIComponent|parseInt|parseFloat|Number\(|basename\(|shellescape|shell-quote|quote\(")
 
 
+_JS_PURIFIERS = re.compile(r"DOMPurify|sanitize|purify")
+_JS_REACT_PURIFIERS = re.compile(r"DOMPurify|sanitize|purify|escapeHtml|xss\(")
+_JS_LINE_CLEANERS = re.compile(r"DOMPurify|sanitize|escape|parseInt|Number\(|encodeURIComponent|basename\(")
+
+
+def _js_sanitised(expr: str, rule: Rule | None = None, builtin: re.Pattern[str] | None = _JS_CLEANERS) -> bool:
+    """A known cleaner, or a sanitiser this project taught Rempart (.rempart/knowledge.toml)."""
+    if builtin is not None and builtin.search(expr):
+        return True
+    from rempart.knowledge import active, rule_category
+
+    learned = active().js_cleaner(rule_category(rule.id) if rule is not None else None)
+    return bool(learned and learned.search(expr))
+
+
 def _js_block(text: str, open_brace: int) -> str:
     """Text between `{` at open_brace and its matching `}` (strings and templates skipped)."""
     depth, k, quote = 0, open_brace, ""
@@ -408,7 +423,7 @@ def js_function_summaries(text: str) -> dict[str, list[tuple[Rule, int, int, str
                 else:
                     args = _js_call_args(body, sm.end() - 1)
                     expr = args[0] if args else ""
-                if not expr or _JS_CLEANERS.search(expr):
+                if not expr or _js_sanitised(expr, r):
                     continue
                 for i, p in enumerate(params):
                     if p and re.search(rf"(?<![\w$.]){re.escape(p)}(?![\w$])", expr):
@@ -507,7 +522,7 @@ def js_tracked_names(text: str) -> tuple[dict[str, int], dict[str, int]]:
         for m in _JS_DECL.finditer(text):
             name, rhs = m.group(1), m.group(2)
             line = text.count("\n", 0, m.start()) + 1
-            if _JS_SOURCE.search(rhs) or (known and known.search(rhs)):
+            if (_JS_SOURCE.search(rhs) or (known and known.search(rhs))) and not _js_sanitised(rhs, None, None):
                 tainted.setdefault(name, line)
             if _JS_DYNAMIC_RHS.search(rhs):
                 dynamic.setdefault(name, line)
@@ -603,7 +618,7 @@ class CodeScanner:
             if is_comment(line):
                 continue
             rhs = _js_expression(text, m.end())
-            if not rhs or re.search(r"DOMPurify|sanitize|purify", rhs):
+            if not rhs or _js_sanitised(rhs, R_XSS, _JS_PURIFIERS):
                 continue
             concatenated = re.findall(r"(?:^|\+)\s*([A-Za-z_$][\w$.\[\]'\"]*(?:\([^)]*\))?)\s*(?=\+|$)", re.sub(r"`[^`]*`|'[^']*'|\"[^\"]*\"", "", rhs))
             raw = unsafe_leaves(rhs) if "`" in rhs else []
@@ -631,7 +646,7 @@ class CodeScanner:
             expr = text[m.end(): m.end() + 200].split("}}")[0].strip()
             ln = line_of(text, m.start())
             snippet = lines[ln - 1].strip()[:240] if ln <= len(lines) else ""
-            if not expr or re.match(r"""^(?:["'][^"']*["']|`[^`$]*`)\s*$""", expr) or re.search(r"DOMPurify|sanitize|purify|escapeHtml|xss\(", expr):
+            if not expr or re.match(r"""^(?:["'][^"']*["']|`[^`$]*`)\s*$""", expr) or _js_sanitised(expr, R_XSS, _JS_REACT_PURIFIERS):
                 continue
             ident = re.match(r"^([A-Za-z_$][\w$]*)$", expr)
             if ident and re.search(rf"(?:const|let|var)\s+{re.escape(ident.group(1))}\s*=\s*(?:[\"'][^\"']*[\"']|`[^`$]*`)\s*;?", text):
@@ -706,7 +721,7 @@ class CodeScanner:
                         continue
                     arg = args[idx]
                     names = [n for n in tainted if re.search(rf"(?<![\w$.]){re.escape(n)}(?![\w$])", arg) and taint_reaches(n, tainted[n], ln)]
-                    if not (_JS_SOURCE.search(arg) or names) or _JS_CLEANERS.search(arg):
+                    if not (_JS_SOURCE.search(arg) or names) or _js_sanitised(arg, r):
                         continue
                     if (r.id, ln) in seen:
                         continue
@@ -736,7 +751,7 @@ class CodeScanner:
                 if not taint_reaches(v, names[v], ln):
                     continue  # use must follow the assignment, close enough to plausibly be the same scope
                 line = lines[ln - 1] if ln <= len(lines) else ""
-                if is_comment(line) or re.search(r"DOMPurify|sanitize|escape|parseInt|Number\(|encodeURIComponent|basename\(", line):
+                if is_comment(line) or _js_sanitised(line, r, _JS_LINE_CLEANERS):
                     continue
                 why = "request data" if v in tainted else "string interpolation"
                 f = Finding(r, rel, ln, msg.format(v=v, why=why) + f" (assigned on line {names[v]}).", snippet=line.strip()[:240])

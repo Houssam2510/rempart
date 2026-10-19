@@ -33,8 +33,11 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
         "  " + "  ".join(col(f"{counts[s.name]} {s.name.lower()}", COLORS[s]) for s in sorted(Severity, reverse=True)),
         "",
     ]
-    if diff and (diff.get("new") or diff.get("fixed")):
-        out.append(f"  since last scan: {col('+' + str(len(diff['new'])) + ' new', COLORS[Severity.HIGH])}  {col('-' + str(len(diff['fixed'])) + ' fixed', COLORS[Severity.LOW])}")
+    if diff and (diff.get("new") or diff.get("fixed") or diff.get("gone")):
+        line = f"  since last scan: {col('+' + str(len(diff['new'])) + ' new', COLORS[Severity.HIGH])}  {col('-' + str(len(diff['fixed'])) + ' fixed', COLORS[Severity.LOW])}"
+        if diff.get("gone"):
+            line += f"  ({len(diff['gone'])} no longer reported: options, configuration or learned knowledge changed)"
+        out.append(line)
         out.append("")
     shown = [f for f in result.findings if f.severity is not None and f.severity >= min_severity]
     by_domain: dict[str, list] = {}

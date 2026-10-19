@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-agent
+spec:
+  selector:
+    matchLabels: {app: node-agent}
+  template:
+    metadata:
+      labels: {app: node-agent}
+    spec:
+      containers:
+# rempart-expect: K8S-PRIV-ESCALATION
+        - name: agent
+          image: example/agent:1.4.2
+          securityContext:
+# rempart-expect: K8S-PRIVILEGED
+            privileged: true
+          volumeMounts:
+            - name: host
+              mountPath: /host
+      volumes:
+        - name: host
+# rempart-expect: K8S-HOSTPATH
+          hostPath:
+            path: /

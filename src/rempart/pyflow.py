@@ -26,6 +26,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
+from rempart import knowledge
+
 USER, WEAKRAND = "user", "weakrand"
 ALL_CATS = frozenset({"sql", "cmd", "code", "path", "redirect", "xss", "xpath", "ldap", "ssrf", "deser", "trust", "regex", "template"})
 _NOCONST = object()
@@ -123,6 +125,9 @@ SANITIZERS: dict[str, frozenset[str]] = {
     "re.escape": frozenset({"regex"}), "escape_filter_chars": frozenset({"ldap"}), "ldap3.utils.conv.escape_filter_chars": frozenset({"ldap"}),
     "url_for": ALL_CATS, "flask.url_for": ALL_CATS,
 }
+# Sink categories whose dangerous input is the first positional argument; the rest
+# (bound SQL parameters, subprocess options, file modes) cannot carry the attack.
+_SUBJECT_IS_FIRST_ARG = frozenset({"sql", "cmd", "code", "path", "redirect", "regex", "template", "deser"})
 # Functions whose result carries no user data (numbers, hashes, lengths, booleans).
 NEUTRALIZERS = {"render_template", "flask.render_template", "int", "float", "bool", "len", "abs", "round", "hash", "id", "isinstance", "callable", "ord", "uuid.uuid4", "secrets.token_hex",
                 "secrets.token_urlsafe", "secrets.randbelow", "secrets.choice", "secrets.token_bytes", "time.time", "datetime.now", "datetime.datetime.now"}
@@ -130,7 +135,16 @@ NON_HTML_RESPONSES = {"send_file", "send_from_directory", "jsonify", "abort", "F
 PROPAGATE_METHODS = {"encode", "decode", "strip", "lstrip", "rstrip", "lower", "upper", "title", "capitalize", "casefold", "swapcase", "replace", "format",
                      "join", "split", "rsplit", "splitlines", "partition", "rpartition", "removeprefix", "removesuffix", "zfill", "center", "ljust", "rjust",
                      "expandtabs", "translate", "read", "readline", "readlines", "getvalue", "copy", "values", "items", "keys", "__str__"}
-SHELLS = {"sh", "bash", "zsh", "dash", "/bin/sh", "/bin/bash", "cmd", "cmd.exe", "powershell", "pwsh", "-c", "/c"}
+SHELLS = {"sh", "bash", "zsh", "dash", "/bin/sh", "/bin/bash", "cmd", "cmd.exe", "powershell", "pwsh"}
+SHELL_SCRIPT_FLAGS = {"-c", "/c", "/C", "-Command", "-command"}
+
+
+def _shell_argv(elems: tuple["Val", ...]) -> bool:
+    """`["sh", "-c", script]`: a shell told to run its argument as a script. A `-c` given
+    to another program (`["ping", "-c", "1", host]`) is only an option."""
+    consts = [str(e.const) if e.has_const() else None for e in elems]
+    return bool(consts) and consts[0] is not None and consts[0].rsplit("/", 1)[-1] in {x.rsplit("/", 1)[-1] for x in SHELLS} \
+        and any(c in SHELL_SCRIPT_FLAGS for c in consts[1:])
 WEAK_RANDOM_FUNCS = {"random", "randint", "randrange", "choice", "choices", "sample", "uniform", "getrandbits", "normalvariate", "gauss", "triangular",
                      "betavariate", "expovariate", "gammavariate", "lognormvariate", "vonmisesvariate", "paretovariate", "weibullvariate", "shuffle", "randbytes"}
 SESSION_NAMES = re.compile(r"(?:^|\.)(?:session|mysession|flask\.session|request\.session)$")
@@ -315,7 +329,7 @@ class FunctionFlow:
             return join(self.ev(node.body, check), self.ev(node.orelse, check))
         if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
             elems = tuple(self.ev(e, check) for e in node.elts)
-            flags = frozenset({"shell"}) if any(e.has_const() and str(e.const) in SHELLS for e in elems) else frozenset()
+            flags = frozenset({"shell"}) if _shell_argv(elems) else frozenset()
             if all(e.has_const() for e in elems) and not isinstance(node, ast.Set):
                 consts = [e.const for e in elems]
                 return Val(const=consts if isinstance(node, ast.List) else tuple(consts), items=elems, flags=flags)
@@ -399,7 +413,7 @@ class FunctionFlow:
             return None
         if method in ("append", "add") and args:
             if cur.items is not None:
-                flags = cur.flags | ({"shell"} if args[0].has_const() and str(args[0].const) in SHELLS else set())
+                flags = cur.flags | ({"shell"} if _shell_argv(cur.items + (args[0],)) else set())
                 self.env[recv_name] = Val(items=cur.items + (args[0],), flags=frozenset(flags), taint=cur.taint | args[0].taint)
             else:
                 self.env[recv_name] = join(cur, taint_of(args[0]))
@@ -484,8 +498,11 @@ class FunctionFlow:
         if out is not None:
             return out
 
-        if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars"):
-            cats = SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())
+        learned = knowledge.active().categories_of(name, short)
+        if learned and "*" in learned:
+            learned = ALL_CATS
+        if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars") or learned:
+            cats = (SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())) | learned
             base = join(*(taint_of(a) for a in args)) if args else CLEAN
             return replace(base, clean=base.clean | cats, const=_NOCONST if not base.has_const() else base.const)
         if short in NON_HTML_RESPONSES:
@@ -570,7 +587,10 @@ class FunctionFlow:
     def _hit(self, cat: str, node: ast.AST, msg: str, **extra: Any) -> None:
         if self.summarising and extra.get("tainted") and "params" not in extra:
             # while summarising, a "tainted" sink means a parameter (or the request) reaches it
-            if isinstance(node, ast.Call):
+            if isinstance(node, ast.Call) and cat in _SUBJECT_IS_FIRST_ARG and node.args:
+                # execute(query, params): only the statement is dangerous, the bound parameters are not
+                parts = [node.args[0]]
+            elif isinstance(node, ast.Call):
                 parts = list(node.args) + [k.value for k in node.keywords]
             elif isinstance(node, (ast.Return, ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 parts = [node.value] if node.value is not None else []
@@ -898,6 +918,7 @@ class FunctionFlow:
                 self.env[n] = replace(v, clean=ALL_CATS, flags=v.flags | {"validated"})
 
 
+API_FRAMEWORKS = ("fastapi", "starlette", "litestar", "flask_restx", "flask_smorest", "apiflask")
 ROUTE_DECORATOR = re.compile(r"\.(?:route|get|post|put|patch|delete|api_route|websocket)$")
 
 
@@ -983,8 +1004,9 @@ def analyse_module(tree: ast.Module, report: Callable[[str, ast.AST, str, dict[s
         decorators = [dotted(d.func if isinstance(d, ast.Call) else d) for d in fn.decorator_list]
         route = ""
         params: set[str] = set()
-        if any(d.endswith(".route") for d in decorators):
-            route = "flask"
+        flask_module = any(str(i).split(".")[0] == "flask" for i in imports) and not any(str(i).split(".")[0] in API_FRAMEWORKS for i in imports)
+        if any(d.endswith(".route") for d in decorators) or (flask_module and any(ROUTE_DECORATOR.search(d) for d in decorators)):
+            route = "flask"  # Flask 2's @app.get / @bp.post are routes like @app.route
         elif any(ROUTE_DECORATOR.search(d) for d in decorators):
             route = "api"
             params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} - {"self", "cls", "request", "db", "session", "background_tasks", "response"}

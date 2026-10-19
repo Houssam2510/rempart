@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  selector:
+    matchLabels: {app: api}
+  template:
+    metadata:
+      labels: {app: api}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: api
+          image: example/api@sha256:4a1c4b9f0e2d3c5b6a7988776655443322110ffeeddccbbaa99887766554433
+          securityContext:
+# rempart-safe: K8S-PRIVILEGED, K8S-PRIV-ESCALATION, K8S-DANGEROUS-CAPS
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            limits: {cpu: "500m", memory: 256Mi}

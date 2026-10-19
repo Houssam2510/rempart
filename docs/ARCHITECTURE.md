@@ -60,7 +60,7 @@ rempart scan --aws/--image             merges those findings before correlation
 | Resource graph | `graph.py` | nodes: Terraform blocks, compose services, k8s objects, image build contexts; edges: references, depends_on/networks, selectors/service accounts/bindings, image built here → workload or `user_data` that runs it |
 | Correlation | `correlate.py` | adds `CHAIN-*` findings (domain `attack-path`) after triage; infrastructure chains are `linked` only through a graph path, otherwise `co-occurrence` one level lower |
 | AI review | `agent.py`, `agent_eval.py` | `ai-confirmed` / `ai-rejected` / `ai-uncertain`, reasoning and evidence in `extra`, proposed patches, proof tests (written, never run); `agent-eval` scores it on `corpus/agent_cases.json` |
-| Learning | `history.py` | Beta posterior per rule, then per rule × kind of file (code, scripts, tests, infra, CI, frontend, docs) with the rule-wide value as prior; AI verdicts weigh 0.5 and cannot close findings |
+| Learning | `history.py`, `knowledge.py` | Beta posterior per rule, then per rule × kind of file (code, scripts, tests, infra, CI, frontend, docs) with the rule-wide value as prior. Evidence from people, the agent, fixes and inline ignores, weighted by source, age and rule version; regressions raised one level. Project knowledge (learned sanitisers and placeholders) feeds the data-flow engines and the secrets scanner during the scan |
 
 ## Agent loop (`agent.py`)
 
@@ -98,17 +98,29 @@ JSON-RPC 2.0 over stdio, newline-delimited. It implements `initialize` (protocol
 
 ## Learning store
 
-SQLite at `REMPART_HOME/rempart.db`:
+SQLite at `REMPART_HOME/rempart.db` (older databases gain the new columns on first open):
 
-- `scans(id, project, ts, score, grade, counts, files, duration)`
-- `findings(scan_id, fingerprint, rule_id, severity, path, line, message)`
-- `verdicts(project, fingerprint, rule_id, verdict ∈ {tp, fp, accepted}, note, ts)`
+- `scans(id, project, ts, score, grade, counts, files, duration, version, profile)`
+- `findings(scan_id, fingerprint, rule_id, severity, path, line, message, base_severity, base_confidence)`
+- `verdicts(project, fingerprint, rule_id, verdict ∈ {tp, fp, accepted}, note, ts, source ∈ {human, ai, implicit, inline}, path, rule_version)`
 
-Precision per rule is a Beta posterior whose prior is the rule's declared confidence (strength 4). Suppression is per project, while calibration is global, which is how one project's feedback improves scans of the next one.
+`Calibrator` is a pure function of a list of `Evidence`: precision per rule is a Beta posterior (strength 4) whose prior is the finding's own confidence as the scanner produced it (`Finding.raw`), so a tainted data-flow hit and a bare pattern keep their difference. Each piece of evidence weighs `source × 0.5^(age/365 d) × (0.25 if rule_version < Rule.version)`. A stronger source overwrites a weaker one (human > ai > implicit/inline), never the reverse. Suppression is per project and human-only, while calibration is global, which is how one project's feedback improves scans of the next one.
+
+**Implicit evidence.** The CLI stores a *profile* with every scan: kind, options, a hash of `.rempart.toml` and of the knowledge file. When two consecutive scans share version and profile, a finding of the earlier one that is absent from the later one, whose file was still scanned and that nobody judged, can only have gone because the code changed: an `implicit` true positive. If the same fingerprint comes back, it is a regression (`extra.regression`, severity +1). `rempart:ignore` lines produce `inline` false-positive evidence. When profiles differ, vanished findings are reported as "no longer reported", not fixed.
+
+**Project knowledge** (`knowledge.py`, `.rempart/knowledge.toml`). `rempart triage ID --fp --because sanitizer:NAME[=categories]` records a sanitiser whose default category is the triaged rule's data-flow category (`rule_category`); `placeholder:VALUE` records a non-secret value. `run_scan` loads the file and exposes it through a context variable (`knowledge.active()`): `pyflow` treats the function as a sanitiser of those categories, the JS/TS analysis as a cleaner for the matching rules, the secrets scanner skips the values. The agent's `record_verdict` and the MCP `rempart_triage` can only *propose* a sanitiser (`[proposed.sanitizers]`); `rempart learn --accept-proposals` applies them.
+
+**Replay** (`History.replay`, `rempart learn --eval`). Every finding a person judged is scored as it stood the day it first appeared, with the scanner's confidence and with a `Calibrator` built only from evidence dated earlier. The report gives ranking AUC, Brier score and precision / false alarms in the top 10 and 20, with and without learning.
+
+## Bench
+
+`bench.py` and `corpus/bench/`: each case is a small repository whose lines are labelled with comments (`rempart-expect`, `rempart-safe`, `rempart-alt`, `rempart-expect-file`). Cases are copied to a temporary directory with the labels removed and `{{FAKE_*}}` placeholders filled with credential-shaped strings built at runtime, then scanned offline with every scanner. A rule labelled anywhere in a case is fully labelled there, so any other finding of it is a false positive. `rempart bench --check bench/baseline.json` fails CI on any drop of precision or recall in any domain; `--corpus DIR` runs the same scoring on an external labelled set.
 
 ## Adding a rule
 
 1. Declare it with `rule(...)` next to the scanner that detects it (id, severity, domain, CWE, OWASP 2025, remediation, prior confidence).
 2. Emit `Finding(rule, path, line, message, snippet=...)` from the scanner.
 3. Add a positive test and, whenever there is a plausible look-alike, a negative test.
-4. Run `rempart rules --markdown > docs/RULES.md`.
+4. Label a realistic occurrence and a look-alike in a bench case (`src/rempart/corpus/bench/`), then `rempart bench --update bench/baseline.json`.
+5. When you change an existing rule's detection logic, bump its `version=` so older verdicts weigh less.
+6. Run `rempart rules --markdown > docs/RULES.md`.

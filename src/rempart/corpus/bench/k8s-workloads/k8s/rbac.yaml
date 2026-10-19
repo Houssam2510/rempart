@@ -1,0 +1,35 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ci-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+# rempart-expect: K8S-CLUSTER-ADMIN-BINDING
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: ci
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: everything
+  namespace: ci
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+# rempart-expect: K8S-RBAC-WILDCARD
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: read-pods
+  namespace: ci
+rules:
+# rempart-safe: K8S-RBAC-WILDCARD, K8S-RBAC-SECRETS
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]

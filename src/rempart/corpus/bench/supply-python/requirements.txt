@@ -1,0 +1,8 @@
+# rempart-expect: SUPPLY-DEPENDENCY-CONFUSION
+--extra-index-url https://pypi.internal.example/simple
+# rempart-safe: SUPPLY-UNPINNED
+flask==3.0.3
+# rempart-expect: SUPPLY-UNPINNED
+requests>=2.0
+# rempart-expect: SUPPLY-TYPOSQUAT
+reqeusts==2.31.0

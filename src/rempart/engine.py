@@ -161,6 +161,9 @@ class ScanResult:
     errors: list[str] = field(default_factory=list)
     context: list[Finding] = field(default_factory=list)
     graph: Any = None  # rempart.graph.ResourceGraph, when the scan read the repository
+    files: list[str] = field(default_factory=list)  # every file the scan read (learning: "still there?")
+    ignored: list[Finding] = field(default_factory=list)  # silenced by an inline `rempart:ignore` (a learning signal)
+    knowledge_digest: str = ""  # what .rempart/knowledge.toml held for this scan
 
     def add_attack_paths(self) -> None:
         """Correlate the (already triaged) findings into attack chains."""
@@ -213,12 +216,24 @@ def run_scan(
     correlate: bool = True,
     verify_secrets: bool = False,
 ) -> ScanResult:
+    from rempart.knowledge import Knowledge, using
+
+    with using(Knowledge.load(root)) as knowledge:
+        result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets)
+        result.knowledge_digest = knowledge.digest()
+        if correlate:
+            result.add_attack_paths()
+    return result
+
+
+def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: bool, verify_secrets: bool) -> ScanResult:
     start = time.monotonic()
     files, tracked = discover(root, config)
     ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline, verify_secrets=verify_secrets)
     findings: list[Finding] = []
     errors: list[str] = []
     suppressed = 0
+    ignored: list[Finding] = []
     seen: set[str] = set()
     for scanner in scanners:
         try:
@@ -237,6 +252,7 @@ def run_scan(
                 f.severity = config.severity_overrides[f.rule.id]
             if _suppressed(ctx, f):
                 suppressed += 1
+                ignored.append(f)
                 continue
             key = f"{f.fingerprint}:{f.line}"
             if key in seen:
@@ -257,9 +273,9 @@ def run_scan(
         errors=errors,
         context=context_signals(files, ctx.text),
         graph=build_graph(files, ctx.text),
+        files=files,
+        ignored=ignored,
     )
-    if correlate:
-        result.add_attack_paths()
     return result
 
 

@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+// rempart-expect: AI-MCP-UNPINNED-SERVER
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+// rempart-expect: AI-MCP-SECRET-IN-CONFIG
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "{{FAKE_GH_TOKEN}}"
+      }
+    },
+    "fetch": {
+      "command": "uvx",
+// rempart-safe: AI-MCP-UNPINNED-SERVER
+      "args": ["mcp-server-fetch==2025.4.7"]
+    }
+  }
+}

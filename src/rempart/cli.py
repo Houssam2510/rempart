@@ -5,6 +5,7 @@
     rempart triage ID --fp|--tp|--accept   teach Rempart about a finding
     rempart history [PATH]         score trend, new/fixed, MTTR
     rempart learn                  what the feedback loop has learned per rule
+    rempart bench                  detection metrics per domain on a labelled corpus
     rempart rules [--domain D]     list every rule and its mappings
 """
 
@@ -26,6 +27,19 @@ from rempart.registry import OWASP_2025, load_all_rules
 
 def _project_id(root: Path) -> str:
     return str(root.resolve())
+
+
+def _scan_profile(root: Path, kind: str, **options: object) -> str:
+    """What a scan was run with. Two scans with the same profile only differ by the
+    code, so a finding that vanished between them was fixed (an implicit learning signal)."""
+    import hashlib
+
+    from rempart.knowledge import Knowledge
+
+    cfg = root / ".rempart.toml"
+    cfg_hash = hashlib.sha256(cfg.read_bytes()).hexdigest()[:12] if cfg.is_file() else "-"
+    opts = ",".join(f"{k}={v}" for k, v in sorted(options.items()) if v not in (None, False, "", []))
+    return f"{kind}|{opts}|config={cfg_hash}|knowledge={Knowledge.load(root).digest()}"
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
@@ -101,7 +115,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
         result.findings, learned_suppressed = hist.apply_knowledge(project, result.findings)
         result.suppressed += learned_suppressed
         result.add_attack_paths()
-        scan_id = hist.record(project, result)
+        profile = _scan_profile(root, "scan", only=args.only, skip=args.skip, offline=args.offline, aws=args.aws,
+                                image=",".join(args.image or []), git_history=args.git_history, baseline=args.baseline,
+                                prod_only=args.prod_only, verify_secrets=args.verify_secrets)
+        scan_id = hist.record(project, result, profile)
         diff = hist.diff_with_previous(project, scan_id)
         hist.close()
     else:
@@ -287,10 +304,22 @@ def cmd_agent(args: argparse.Namespace) -> int:
         return 2
     apply_report(result.findings, report)
     result.add_attack_paths()
-    hist.record(project, result)
+    hist.record(project, result, _scan_profile(root, "agent", offline=args.offline))
+    from rempart.knowledge import Knowledge
+
+    knowledge, proposals = Knowledge.load(root), []
+    by_fp = {f.fingerprint: f for f in result.findings}
     for fid, v in report.verdicts.items():
         if v.verdict in ("confirmed", "false_positive"):
             hist.triage(project, fid, "tp" if v.verdict == "confirmed" else "fp", f"AI: {v.reasoning[:300]}", source="ai")
+        if v.sanitizer and fid in by_fp and v.sanitizer not in knowledge.sanitizers:
+            f = by_fp[fid]
+            try:
+                proposals.append(knowledge.learn("sanitizer", v.sanitizer, f.rule.id, f"{f.path}:{f.line} (agent)", proposed=True))
+            except ValueError:
+                pass  # not a data-flow rule, or not a function name
+    if proposals:
+        knowledge.save(root)
     hist.close()
     md = render_report_md(report, result.findings, root)
     Path(args.report).write_text(md, encoding="utf-8")
@@ -308,9 +337,34 @@ def cmd_agent(args: argparse.Namespace) -> int:
           + (f" · proof tests: {args.proofs}/ ({len(proofs)}, not executed)" if proofs else ""))
     if report.summary:
         print("\n" + report.summary)
+    if proposals:
+        print("\nThe agent proposes sanitisers to learn (review, then `rempart learn --accept-proposals`):\n  " + "\n  ".join(proposals))
     if args.apply and report.fixes:
         changed = apply_fixes(report, root)
         print(f"Applied fixes to: {', '.join(changed)}. Review with `git diff` before committing.")
+    return 0
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from rempart import bench
+
+    result = bench.run(Path(args.corpus) if args.corpus else None, set(args.case) if args.case else None)
+    if not result.cases:
+        print("rempart: no bench cases found", file=sys.stderr)
+        return 2
+    print(bench.render(result, verbose=args.verbose))
+    data = result.to_dict()
+    if args.json:
+        Path(args.json).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    if args.update:
+        Path(args.update).write_text(json.dumps({"cases": data["cases"], "total": data["total"], "domains": data["domains"]}, indent=2) + "\n", encoding="utf-8")
+        print(f"\nBaseline written to {args.update}")
+    if args.check:
+        problems = bench.check(result, bench.load_baseline(Path(args.check)), args.tolerance)
+        if problems:
+            print("\nRegressions against " + args.check + ":\n  " + "\n  ".join(problems))
+            return 1
+        print(f"\nNo regression against {args.check}.")
     return 0
 
 
@@ -322,17 +376,39 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 def cmd_triage(args: argparse.Namespace) -> int:
     from rempart.history import History
+    from rempart.knowledge import FILE, Knowledge
 
     verdict = "fp" if args.fp else "tp" if args.tp else "accepted"
+    if args.because and verdict == "tp":
+        print("rempart: --because explains why a finding is not a problem; use it with --fp or --accept", file=sys.stderr)
+        return 2
+    root = Path(args.path).resolve()
+    project = _project_id(root)
     hist = History()
     try:
-        rule_id = hist.triage(_project_id(Path(args.path)), args.id, verdict, args.note or "")
+        learned = ""
+        if args.because:
+            kind, _, value = args.because.partition(":")
+            row = hist.finding_row(project, args.id)
+            if row is None:
+                raise KeyError(f"unknown fingerprint {args.id} for {project}; run a scan first")
+            knowledge = Knowledge.load(root)
+            try:
+                learned = knowledge.learn(kind.strip(), value.strip(), row["rule_id"], f"{row['path']}:{row['line']}")
+            except ValueError as exc:
+                print(f"rempart: {exc}", file=sys.stderr)
+                return 2
+            knowledge.save(root)
+        note = " · ".join(x for x in (args.note or "", f"because {args.because}" if args.because else "") if x)
+        rule_id = hist.triage(project, args.id, verdict, note)
     except KeyError as exc:
         print(f"rempart: {exc}", file=sys.stderr)
         return 2
     finally:
         hist.close()
     print(f"Recorded {verdict.upper()} for {args.id} ({rule_id}). Future scans will use it.")
+    if learned:
+        print(f"Learned: {learned}. Every future scan of this repository applies it ({FILE}; commit it to share).")
     return 0
 
 
@@ -359,19 +435,72 @@ def cmd_history(args: argparse.Namespace) -> int:
 
 def cmd_learn(args: argparse.Namespace) -> int:
     from rempart.history import History
+    from rempart.knowledge import FILE, Knowledge
 
-    rules = load_all_rules()
-    hist = History()
-    stats = hist.rule_stats()
-    hist.close()
-    if not stats:
-        print("No feedback yet. Triage findings with `rempart triage <id> --tp/--fp/--accept`.")
+    root = Path(args.path).resolve()
+    if args.accept_proposals:
+        knowledge = Knowledge.load(root)
+        accepted = knowledge.accept_proposals()
+        if not accepted:
+            print("No proposals to accept.")
+            return 0
+        knowledge.save(root)
+        print("Accepted:\n  " + "\n  ".join(accepted) + f"\nWritten to {FILE}.")
         return 0
-    print(f"{'rule':<34} {'TP':>4} {'FP':>4} {'acc':>4}  prior  learned")
-    for rid, s in sorted(stats.items(), key=lambda kv: kv[1].precision()):
-        prior = rules[rid].confidence if rid in rules else 0.8
-        print(f"{rid:<34} {s.tp:>4g} {s.fp:>4g} {s.accepted:>4g}  {prior:>5.0%}  {s.precision(prior):>6.0%}")
+    hist = History()
+    if args.eval:
+        report = hist.replay(None if args.all_projects else _project_id(root))
+        hist.close()
+        if args.json:
+            print(json.dumps(report, indent=2))
+            return 0
+        print(_render_replay(report))
+        return 0
+    stats = hist.rule_stats()
+    sources = hist.source_counts()
+    hist.close()
+    rules = load_all_rules()
+    knowledge = Knowledge.load(root)
+    if not stats and knowledge.is_empty() and not knowledge.proposed:
+        print("No feedback yet. Triage findings with `rempart triage <id> --tp/--fp/--accept`; fixes and inline ignores count too.")
+        return 0
+    if stats:
+        print(f"{'rule':<34} {'TP':>5} {'FP':>5} {'acc':>4}  prior  learned  evidence")
+        for rid, s in sorted(stats.items(), key=lambda kv: kv[1].precision()):
+            prior = rules[rid].confidence if rid in rules else 0.8
+            src = ", ".join(f"{n} {k}" for k, n in sorted(sources.get(rid, {}).items()))
+            print(f"{rid:<34} {s.tp:>5.3g} {s.fp:>5.3g} {s.accepted:>4.3g}  {prior:>5.0%}  {s.precision(prior):>6.0%}  {src}")
+        print("\nCounts are weighted: human 1, agent / fixed-in-code / inline-ignore 0.5, halved every year, older rule versions 0.25.")
+    if not knowledge.is_empty() or knowledge.proposed:
+        print(f"\nProject knowledge ({FILE}):")
+        for name, cats in sorted(knowledge.sanitizers.items()):
+            print(f"  sanitizer    {name}()  {', '.join(sorted(cats))}")
+        for value in sorted(knowledge.placeholders):
+            print(f"  placeholder  {value}")
+        for name, info in sorted(knowledge.proposed.get("sanitizers", {}).items()):
+            print(f"  proposed     {name}()  {', '.join(map(str, info.get('categories', [])))}  ({info.get('learned_from', '')})")
+        if knowledge.proposed:
+            print("  Accept the proposals with `rempart learn --accept-proposals`.")
     return 0
+
+
+def _render_replay(r: dict) -> str:
+    if not r["labelled"]:
+        return "Nothing to replay yet: the replay needs findings a person triaged (rempart triage)."
+    lines = [f"Replay of {r['labelled']} triaged findings ({r['real']} real, {r['false_alarms']} false alarms), each scored "
+             "as it stood the day it first appeared.\n",
+             f"{'':<22} {'without learning':>17} {'with learning':>14}"]
+
+    def row(label: str, a: object, b: object) -> None:
+        lines.append(f"{label:<22} {str(a):>17} {str(b):>14}")
+
+    w, l = r["without_learning"], r["with_learning"]
+    row("ranking AUC", w["auc"] if w["auc"] is not None else "–", l["auc"] if l["auc"] is not None else "–")
+    row("Brier score (lower)", w["brier"], l["brier"])
+    for key in [k for k in w if k.startswith("top")]:
+        row(f"precision in {key}", f"{w[key]['precision']:.0%}", f"{l[key]['precision']:.0%}")
+        row(f"false alarms in {key}", w[key]["false_positives"], l[key]["false_positives"])
+    return "\n".join(lines)
 
 
 def cmd_rules(args: argparse.Namespace) -> int:
@@ -434,6 +563,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--tp", action="store_true", help="true positive")
     g.add_argument("--accept", action="store_true", help="real, but risk accepted")
     t.add_argument("--note")
+    t.add_argument("--because", metavar="KIND:VALUE",
+                   help="teach the reason so it applies to the whole class: sanitizer:NAME[=categories] or placeholder:VALUE")
     t.add_argument("--path", default=".", help="project root (default: current directory)")
     t.set_defaults(func=cmd_triage)
 
@@ -442,7 +573,13 @@ def build_parser() -> argparse.ArgumentParser:
     h.add_argument("--limit", type=int, default=20)
     h.set_defaults(func=cmd_history)
 
-    sub.add_parser("learn", help="per-rule precision learned from your verdicts").set_defaults(func=cmd_learn)
+    ln = sub.add_parser("learn", help="what Rempart learned: per-rule precision, project knowledge, and whether learning helps")
+    ln.add_argument("--path", default=".", help="project root, for its knowledge file and replay (default: current directory)")
+    ln.add_argument("--eval", action="store_true", help="replay history in time order: ranking with versus without learning")
+    ln.add_argument("--all-projects", action="store_true", help="with --eval: replay every project's history")
+    ln.add_argument("--json", action="store_true", help="with --eval: print the replay as JSON")
+    ln.add_argument("--accept-proposals", action="store_true", help="apply the sanitisers the AI agent proposed")
+    ln.set_defaults(func=cmd_learn)
 
     def outputs(sp: argparse.ArgumentParser, min_sev: str = "low") -> None:
         sp.add_argument("-f", "--format", choices=["console", "json", "sarif", "md", "markdown", "html"], default="console")
@@ -505,6 +642,16 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     ev.add_argument("--json", help="also write the detailed results to this file")
     ev.set_defaults(func=cmd_agent_eval)
+
+    bn = sub.add_parser("bench", help="measure detection per domain on a labelled corpus (the bundled one by default)")
+    bn.add_argument("--corpus", help="directory of labelled cases (see rempart/bench.py for the label format)")
+    bn.add_argument("--case", action="append", help="run only this case (repeatable)")
+    bn.add_argument("--check", metavar="BASELINE", help="exit 1 if a domain's precision or recall fell below this baseline JSON")
+    bn.add_argument("--tolerance", type=float, default=0.0, help="allowed drop for --check (default 0: the bench is deterministic)")
+    bn.add_argument("--update", metavar="BASELINE", help="write the current numbers as the new baseline")
+    bn.add_argument("--json", help="also write the full results, misses included")
+    bn.add_argument("-v", "--verbose", action="store_true", help="list every miss, unexpected finding and fired trap")
+    bn.set_defaults(func=cmd_bench)
 
     sub.add_parser("mcp", help="run as a Model Context Protocol server over stdio (for AI coding assistants: Cursor, VS Code, Windsurf…)").set_defaults(func=cmd_mcp)
 

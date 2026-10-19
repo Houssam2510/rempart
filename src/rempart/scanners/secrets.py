@@ -13,6 +13,7 @@ import re
 from typing import Iterator
 
 from rempart.engine import ScanContext, is_comment
+from rempart.knowledge import active as active_knowledge
 from rempart.models import Finding
 from rempart.registry import A02, A04, A07, C, H, L, M, rule
 
@@ -165,6 +166,7 @@ class SecretsScanner:
         if not text:
             return
         test_path = _is_test_path(rel)
+        placeholders = active_knowledge().placeholders
         lock = os.path.basename(rel) in ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "poetry.lock", "Cargo.lock", "go.sum", "uv.lock", "composer.lock")
         if lock:
             return
@@ -178,6 +180,8 @@ class SecretsScanner:
                     continue
                 hit_provider = True
                 token = m.group(0)
+                if "EXAMPLE" in token.upper() or token in placeholders:
+                    continue  # the provider's own documentation value, or one this project declared
                 f = Finding(
                     _RULES[rid], rel, i, f"{_RULES[rid].title.replace('Hard-coded ', '')} found ({redact(token)}).",
                     snippet=line.strip().replace(token, redact(token))[:200], extra={"anchor": f"{rid}:{redact(token)}"},
@@ -197,7 +201,7 @@ class SecretsScanner:
                 continue
             for m in _ASSIGN.finditer(line):
                 name, value = m.group("name"), m.group("value")
-                if _SKIP_NAME.search(name) or _PLACEHOLDER.match(value) or value.startswith(("$", "{", "%", "/", "http")) \
+                if _SKIP_NAME.search(name) or _PLACEHOLDER.match(value) or value in placeholders or value.startswith(("$", "{", "%", "/", "http")) \
                         or re.fullmatch(r"[A-Z][A-Z0-9_\-]{2,}", value):
                     continue
                 if entropy(value) < 3.2 or not (re.search(r"\d", value) and re.search(r"[A-Za-z]", value)):

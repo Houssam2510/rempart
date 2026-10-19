@@ -1,0 +1,15 @@
+name: ci
+on: [push]
+# rempart-expect: GHA-WRITE-ALL
+permissions: write-all
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+# rempart-expect: GHA-UNPINNED-ACTION
+      - uses: actions/setup-node@v4
+# rempart-safe: GHA-UNPINNED-ACTION
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+# rempart-expect: CI-CURL-PIPE-SHELL
+      - run: curl -fsSL https://get.tool.example/install.sh | bash
+      - run: npm ci && npm run build

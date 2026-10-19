@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+Measure everything, learn from everything.
+
+- **`rempart bench`**: a labelled corpus of 22 small repositories covering every file-reading domain (90 issues, 73 traps), per-domain precision and recall, `--check` against `bench/baseline.json` in CI so no domain can regress, `--corpus DIR` for external labelled sets. Labels are comments (`rempart-expect`, `rempart-safe`, `rempart-alt`, `rempart-expect-file`); credentials are filled in at run time, so the repository holds no literal token.
+- **Learning v2**:
+  - `rempart triage ID --fp --because sanitizer:NAME[=categories]` or `placeholder:VALUE` writes `.rempart/knowledge.toml`. A learned sanitiser is applied by the Python data-flow engine and the JS/TS analysis, for the triaged rule's category, so one verdict removes a whole class. Placeholders are never reported as secrets.
+  - The agent (`record_verdict.sanitizer`) and MCP assistants (`rempart_triage.because`) can only propose a sanitiser; `rempart learn --accept-proposals` applies them.
+  - Implicit evidence: a finding that disappears between two scans run the same way (version, options, configuration, knowledge) while its file is still scanned counts as a fix (true positive, weight 0.5); if it comes back it is a regression, raised one level. `rempart:ignore` counts as false-positive evidence (0.5).
+  - Evidence decays with age (half-life one year) and counts 0.25 when it judged an older version of the rule (`Rule.version`). The calibration prior is the finding's own confidence, not only the rule's.
+  - `rempart learn --eval` replays the history in time order: ranking AUC, Brier score and false alarms in the top 10 / 20, with versus without learning. `rempart learn` shows evidence by source and the project knowledge.
+  - The scan header separates "fixed" from "no longer reported" when the scan options or learned knowledge changed.
+- **Defects found while building the bench**, each with a regression test and a bench case:
+  - Java: JDBC concatenation was missed when the SQL literal contained a quote.
+  - Typosquats were never checked on exactly pinned requirements (`reqeusts==2.31.0`).
+  - `ENV API_SECRET_FILE=/run/secrets/api` was reported as a baked-in secret.
+  - The AWS documentation key `AKIAIOSFODNN7EXAMPLE` was reported as a live key.
+  - Payment card numbers in files under 200 bytes were skipped.
+  - Model output was only tracked to a sink on the same line; it now follows variables (`msg = client.messages.create(...)`, `cmd = msg.content[0].text`, `subprocess.run(cmd, shell=True)`).
+  - Python: bound parameters passed through a helper (`execute(query, params)`) counted as SQL injection; a Python-specific copy of the line-level SQL rule duplicated the data-flow engine and fired on values it had proven clean.
+  - Flask 2 shortcut decorators (`@app.get`, `@bp.post`) were treated as JSON APIs, so XSS in their HTML responses was missed.
+  - `["ping", "-c", "1", host]` was reported as a shell script (`-c` alone was taken for `sh -c`).
+  - Terraform findings pointed one line above the resource when a blank line preceded it.
+- OWASP Benchmark for Python unchanged at 99.4. 148 tests.
+
 ## 0.3.0 (2026-10-09)
 
 Depth, proof and continuity.

@@ -23,7 +23,7 @@ R_PIPE_SHELL = rule("DOCKER-CURL-PIPE-SHELL", "Remote script piped into a shell"
 R_ADD_URL = rule("DOCKER-ADD-REMOTE", "ADD fetches a remote URL without verification", M, "containers", cwe="CWE-494", owasp=A08,
                  fix="Use `ADD --checksum=sha256:...` or download with curl and verify the hash.")
 R_SECRET_ENV = rule("DOCKER-SECRET-IN-IMAGE", "Secret baked into the image", H, "containers", cwe=("CWE-798", "CWE-538"), owasp=A07,
-                    fix="ENV and ARG values persist in image layers and `docker history`. Use BuildKit secrets (`RUN --mount=type=secret`) or inject at runtime.")
+                    fix="ENV and ARG values persist in image layers and `docker history`. Use BuildKit secrets (`RUN --mount=type=secret`) or inject at runtime.", version=2)
 R_CHMOD = rule("DOCKER-WORLD-WRITABLE", "World-writable permissions", M, "containers", cwe="CWE-732", owasp=A02, fix="Grant the minimum permissions needed (e.g. 755/644) to the owning user.")
 R_SSH = rule("DOCKER-SSH-EXPOSED", "SSH server exposed in container", M, "containers", cwe="CWE-668", owasp=A02, fix="Do not run sshd in containers; use `docker exec` / `kubectl exec` with RBAC.")
 R_NO_DOCKERIGNORE = rule("DOCKER-NO-DOCKERIGNORE", "Whole context copied without a .dockerignore", M, "containers", cwe="CWE-538", owasp=A02,
@@ -108,7 +108,8 @@ class ContainerScanner:
             elif op in ("ENV", "ARG"):
                 for m in re.finditer(r"([A-Za-z_][\w]*)(?:\s*=\s*|\s+)(\"[^\"]*\"|'[^']*'|\S+)?", arg):
                     key, val = m.group(1), (m.group(2) or "").strip("\"'")
-                    if _SECRET_NAME.search(key) and val and not val.startswith("$") and len(val) >= 4:
+                    if _SECRET_NAME.search(key) and val and not val.startswith(("$", "/")) and len(val) >= 4 \
+                            and not re.search(r"(?i)_(?:FILE|PATH|DIR|NAME|ID)$", key):
                         yield Finding(R_SECRET_ENV, rel, n, f"{op} {key} has a literal value.", snippet=f"{op} {key}=****")
             elif op == "ADD" and re.search(r"https?://", arg) and "--checksum" not in arg:
                 yield Finding(R_ADD_URL, rel, n, "ADD downloads a URL with no checksum.", snippet=ins[:200])

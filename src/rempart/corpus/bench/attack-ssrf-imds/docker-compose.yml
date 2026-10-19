@@ -1,0 +1,4 @@
+services:
+  api:
+    build: .
+    image: registry.example/api:latest

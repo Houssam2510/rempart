@@ -67,6 +67,9 @@ class Rule:
     remediation: str = ""
     references: tuple[str, ...] = ()
     confidence: float = 0.8
+    # Bumped when the rule's detection logic changes meaningfully: verdicts given to an
+    # older version weigh less in calibration (history.py), since they judged other logic.
+    version: int = 1
 
     def __post_init__(self) -> None:
         if self.domain not in DOMAINS:
@@ -89,6 +92,8 @@ class Finding:
     severity: Severity | None = None
     confidence: float | None = None
     learned_note: str = ""
+    # severity and confidence as the scanner produced them, before learning adjusted them
+    raw: tuple[int, float] | None = field(default=None, repr=False, compare=False)
     # How the finding was established. Static pattern match is the weakest evidence;
     # the others are stronger and the reporters say so explicitly.
     #   static | reachable | not-imported | observed | live-secret | revoked-secret

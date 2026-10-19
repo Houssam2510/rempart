@@ -1,0 +1,113 @@
+{
+  "cases": 22,
+  "total": {
+    "tp": 90,
+    "fp": 0,
+    "fn": 2,
+    "traps": 73,
+    "traps_fired": 0,
+    "precision": 1.0,
+    "recall": 0.9783
+  },
+  "domains": {
+    "ai": {
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "traps": 2,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "attack-path": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "traps": 2,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "cicd": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "traps": 2,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "code": {
+      "tp": 37,
+      "fp": 0,
+      "fn": 1,
+      "traps": 30,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 0.9737
+    },
+    "containers": {
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "traps": 3,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "data": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "traps": 5,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "iac": {
+      "tp": 7,
+      "fp": 0,
+      "fn": 1,
+      "traps": 8,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 0.875
+    },
+    "kubernetes": {
+      "tp": 6,
+      "fp": 0,
+      "fn": 0,
+      "traps": 5,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "quality": {
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "traps": 1,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "secrets": {
+      "tp": 8,
+      "fp": 0,
+      "fn": 0,
+      "traps": 12,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "supply-chain": {
+      "tp": 5,
+      "fp": 0,
+      "fn": 0,
+      "traps": 3,
+      "traps_fired": 0,
+      "precision": 1.0,
+      "recall": 1.0
+    }
+  }
+}

@@ -54,7 +54,7 @@ R_LOG_PII = rule("DATA-SENSITIVE-LOGGED", "Sensitive data written to logs", M, "
 R_PII_FILE = rule("DATA-PII-COMMITTED", "Personal data committed to the repository", H, "data", cwe=("CWE-359", "CWE-538"), owasp=A02, frameworks=PRIVACY,
                   fix="Remove the dataset from git history, use synthetic or anonymised fixtures, and record the exposure as a privacy incident if the data is real.")
 R_CARD = rule("DATA-PAYMENT-CARD", "Payment card number in repository", C, "data", cwe="CWE-359", owasp=A04, frameworks=("PCI DSS 3.4",) + PRIVACY,
-              fix="Never store PANs. Use your processor's tokens (Stripe PaymentMethod IDs).")
+              fix="Never store PANs. Use your processor's tokens (Stripe PaymentMethod IDs).", version=2)
 R_DUMP = rule("DATA-DUMP-COMMITTED", "Database dump or local database file committed", H, "data", cwe="CWE-538", owasp=A02, frameworks=PRIVACY,
               fix="Remove it from history and keep dumps in encrypted, access-controlled storage.")
 R_UNBOUNDED = rule("PERF-UNBOUNDED-QUERY", "Unbounded query loads an entire collection/table", L, "performance", cwe=("CWE-770", "CWE-400"), owasp=A02,
@@ -247,9 +247,9 @@ class DataScanner:
                 yield Finding(R_UNBOUNDED, rel, i, "SELECT * with no WHERE/LIMIT.", snippet=line.strip()[:200])
 
     def pii_in_data(self, ctx: ScanContext, rel: str, text: str) -> Iterator[Finding]:
-        if os.path.basename(rel) in ("package.json", "package-lock.json", "tsconfig.json", "composer.json", "pnpm-lock.yaml") or len(text) < 200:
+        if os.path.basename(rel) in ("package.json", "package-lock.json", "tsconfig.json", "composer.json", "pnpm-lock.yaml"):
             return
-        emails = {e.lower() for e in _EMAIL.findall(text)}
+        emails = {e.lower() for e in _EMAIL.findall(text)} if len(text) >= 200 else set()
         emails = {e for e in emails if not re.search(r"@(?:example\.(?:com|org|net)|test\.com|localhost|users\.noreply\.github\.com|email\.com|domain\.com|acme\.\w+)$", e)
                   and not e.endswith((".png", ".jpg", ".svg", ".webp"))}
         if len(emails) >= 25:

@@ -49,6 +49,7 @@ def rule(
     fix: str = "",
     refs: tuple[str, ...] | str = (),
     confidence: float = 0.8,
+    version: int = 1,
 ) -> Rule:
     def tup(v: tuple[str, ...] | str) -> tuple[str, ...]:
         return (v,) if isinstance(v, str) else tuple(v)
@@ -66,6 +67,7 @@ def rule(
         remediation=fix,
         references=tup(refs),
         confidence=confidence,
+        version=version,
     )
     REGISTRY[id] = r
     return r
