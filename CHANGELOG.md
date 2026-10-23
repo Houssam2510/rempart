@@ -23,7 +23,8 @@ Measure everything, learn from everything.
   - Flask 2 shortcut decorators (`@app.get`, `@bp.post`) were treated as JSON APIs, so XSS in their HTML responses was missed.
   - `["ping", "-c", "1", host]` was reported as a shell script (`-c` alone was taken for `sh -c`).
   - Terraform findings pointed one line above the resource when a blank line preceded it.
-- OWASP Benchmark for Python unchanged at 99.4. 148 tests.
+- **`rempart tui`** (`[tui]` extra, Textual): five views (overview with "fix first", findings, attack paths drawn stage by stage, dependencies, learning), scan progress, command palette, help, triage (`t` / `f` / `a`), teach a reason (`b`, then an automatic rescan), open in the editor (`x`), export HTML (`e`). Same pipeline and history as the CLI. Attack-path findings now carry their `stages` and `break_first`; `run_scan` takes a `progress` callback.
+- OWASP Benchmark for Python unchanged at 99.4. 160 tests.
 
 ## 0.3.0 (2026-10-09)
 

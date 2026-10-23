@@ -148,12 +148,15 @@ def correlate(findings: list[Finding], context: list[Finding] | None = None, gra
         else:
             linked = _linked_pair(graph, links) if graph is not None and chain.scope == "graph" else None
             parts = []
+            stages: list[dict[str, Any]] = []
             members: list[str] = []
             for idx, (label, matched) in enumerate(links):
                 best = linked[0][idx] if linked else sorted(matched, key=lambda f: -f.risk)[0]
                 where = f"{best.path}:{best.line}" if best.line else best.path
                 more = f" (+{len(matched) - 1} more)" if len(matched) > 1 and not linked else ""
                 parts.append(f"{label}: {best.rule.id} at {where}{more}")
+                stages.append({"label": label, "rule": best.rule.id, "title": best.rule.title, "where": where,
+                               "fingerprint": best.fingerprint, "others": 0 if linked else len(matched) - 1})
                 members += [f.fingerprint for f in ([best] if linked else matched) if not f.rule.id.startswith("CTX-")]
             first = linked[0][0] if linked else links[0][1][0]
             narrative = chain.narrative
@@ -163,7 +166,8 @@ def correlate(findings: list[Finding], context: list[Finding] | None = None, gra
             elif graph is not None and chain.scope == "graph":
                 narrative = "Both pieces are in this project but no infrastructure link between them was found, so this is a co-occurrence to check, not a proven path. " + narrative
             f = Finding(R_CHAIN[chain.rule_id], first.path, first.line, narrative + " Links → " + " | ".join(parts),
-                        snippet=chain.title, extra={"anchor": chain.rule_id + ":" + ",".join(sorted(set(members))[:6]), "members": members})
+                        snippet=chain.title, extra={"anchor": chain.rule_id + ":" + ",".join(sorted(set(members))[:6]), "members": members,
+                                                    "stages": stages, "break_first": chain.break_first})
             if linked:
                 f.verification = "linked"
                 f.extra["route"] = [graph.describe(p) for p in linked[1]]

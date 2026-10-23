@@ -66,6 +66,10 @@ rempart scan --aws/--image             merges those findings before correlation
 
 Manual tool-use loop on the Anthropic Messages API (`client.beta.messages.create`): the newest Opus-tier model from the Models API unless `REMPART_MODEL` is set (adaptive thinking, effort `high`), strict tool schemas, automatic prompt caching, server-side refusal fallback (`fallbacks="default"`). History is append-only. Every `tool_use` gets a `tool_result` in the next user message, and errors come back as `is_error` results. Stops on `finish` once every target has a verdict, on refusal, or at the turn budget. The `Workspace` class is the agent's only access to the repository: read and search on files the scan discovered, nothing else.
 
+## Terminal interface (`tui.py`)
+
+Two layers. `Session` runs the `rempart scan` pipeline (knowledge, attack paths, history with the CLI's profile, `progress` callback) and records verdicts through `cli.triage`, the function `rempart triage` uses; `visible`, `domain_counts`, `fix_first`, `describe`, `describe_chain` and `code_context` are plain functions. `build_app` wraps them in a Textual application, imported lazily so the core keeps its single dependency. Scans run in a worker thread; table rows are keyed by position because a fingerprint can repeat at several lines; actions on findings are disabled (`check_action`) while a secondary screen is open. Tests drive the application headlessly with Textual's pilot.
+
 ## MCP server (`mcp_server.py`)
 
 JSON-RPC 2.0 over stdio, newline-delimited. It implements `initialize` (protocol version negotiation), `ping`, `tools/list` and `tools/call`. Tool failures are returned as `isError: true` results, not protocol errors, so the calling model can read and recover.

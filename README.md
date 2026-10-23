@@ -5,7 +5,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-6d4aff?style=for-the-badge"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="tests"><img alt="148 tests" src="https://img.shields.io/badge/tests-148%20passing-12805c?style=for-the-badge"></a>
+  <a href="tests"><img alt="160 tests" src="https://img.shields.io/badge/tests-160%20passing-12805c?style=for-the-badge"></a>
   <a href="docs/RULES.md"><img alt="316 rules" src="https://img.shields.io/badge/rules-316-2a78d6?style=for-the-badge"></a>
   <a href="docs/THREAT_CATALOG.md"><img alt="OWASP 2025" src="https://img.shields.io/badge/OWASP%20Top%2010-2025-14161b?style=for-the-badge"></a>
   <a href="#-measured-not-claimed"><img alt="OWASP Benchmark 99.4" src="https://img.shields.io/badge/OWASP%20Benchmark-99.4-12805c?style=for-the-badge"></a>
@@ -62,12 +62,13 @@ Mark a result true or false and each rule's precision is recalibrated, **per kin
 ## 🚀 Quick start
 
 ```bash
-pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # extras: [aws] boto3 · [ai] Anthropic SDK
+pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # extras: [aws] boto3 · [ai] Anthropic SDK · [tui] Textual
 ```
 
 | You want to… | Run |
 |---|---|
 | Scan a repository | `rempart scan .` |
+| Scan, browse, triage and teach in an interactive terminal interface | `rempart tui .` |
 | See every domain fire on a demo app | `rempart scan examples/vulnerable-app --offline` |
 | Correlate code **and** production | `rempart scan . --aws --image myorg/api:latest` |
 | Audit a container image, **no Docker needed** | `rempart image python:3.9-slim` |
@@ -88,6 +89,29 @@ pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # ext
 | Gate CI on severity | `rempart scan . --fail-on high -f sarif -o rempart.sarif --also md:summary.md` |
 
 The core needs only Python 3.11 and PyYAML. No account, no telemetry.
+
+## 🖥️ Terminal interface
+
+`rempart tui .` (needs the `[tui]` extra) runs the same scan as `rempart scan`, with a progress bar, then opens five views:
+
+| View | Shows |
+|---|---|
+| **1 Overview** | score and grade in large digits, trend over past scans, severity and domain bars, **fix first** (proven paths with the cheapest place to break them, upgrades that close used or exploited advisories, proven high findings), attack paths. `Enter` opens the selected action. |
+| **2 Findings** | domain and severity filters, search, a table that fits the terminal, and the selected finding with its code (highlighted line), evidence, how to fix and framework mappings |
+| **3 Attack paths** | each chain drawn from the attacker to the impact, stage by stage, with the infrastructure route and the cheapest place to break it |
+| **4 Dependencies** | the upgrade plan and every advisory of the selected package |
+| **5 Learning** | the replay (does learning help?), the project knowledge, precision per rule and where its evidence came from |
+
+| Key | Does |
+|---|---|
+| `1`…`5` · `ctrl+p` · `?` | switch view · command palette (every action by name) · keys |
+| `t` · `f` · `a` | true positive · false positive · accepted risk, recorded as with `rempart triage` |
+| `b` | false positive **because** `sanitizer:NAME` or `placeholder:VALUE`, then rescans: the whole class goes |
+| `/` · `s` | search rule, path or message · cycle the minimum severity |
+| `x` · `y` | open the finding in `$EDITOR` (or VS Code) at its line · copy `path:line` |
+| `r` · `o` · `e` | rescan · toggle offline (no OSV / KEV / EPSS) · write `rempart-report.html` |
+
+Verdicts, fixes and knowledge made in the interface teach the CLI too: it is the same history and the same `.rempart/knowledge.toml`.
 
 ## 🧩 How it thinks
 
@@ -253,7 +277,7 @@ The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contain
 | `rockylinux:9-minimal` (live pull) | RPM database parsed, advisories matched by source package |
 | AWS / GCP / Azure checks | 28 validated against the AWS service models (botocore Stubber); GCP and Azure against recorded CLI output |
 | `rempart bench`: 22 bundled cases, every domain that reads files, 90 labelled issues + 73 traps | Precision **100 %**, recall **97.8 %**. The 2 misses are known gaps (Terraform variables, JS across modules). This corpus is a **regression gate**, not a held-out set: building it exposed 11 defects, all fixed since, so it shows that they stay fixed, not how Rempart does on code it has never seen. CI fails on any drop in any domain. |
-| Rempart on itself | 148 tests; CI fails on any high finding and on any bench regression |
+| Rempart on itself | 160 tests; CI fails on any high finding and on any bench regression |
 
 ## ⚠️ Limits, stated plainly
 

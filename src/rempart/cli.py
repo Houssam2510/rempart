@@ -1,6 +1,7 @@
 """Command-line interface.
 
     rempart scan [PATH]            static analysis of a repository
+    rempart tui [PATH]             the same, in an interactive terminal interface
     rempart web URL                passive audit of a deployed site you own
     rempart triage ID --fp|--tp|--accept   teach Rempart about a finding
     rempart history [PATH]         score trend, new/fixed, MTTR
@@ -368,44 +369,63 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tui(args: argparse.Namespace) -> int:
+    root = Path(args.path).resolve()
+    if not root.is_dir():
+        print(f"rempart: {root} is not a directory", file=sys.stderr)
+        return 2
+    try:
+        import textual  # noqa: F401
+    except ImportError:
+        print('rempart: the terminal interface needs Textual: pip install "rempart[tui]" (or textual)', file=sys.stderr)
+        return 2
+    from rempart.tui import run
+
+    return run(root, offline=args.offline, prod_only=args.prod_only)
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from rempart.mcp_server import serve
 
     return serve()
 
 
-def cmd_triage(args: argparse.Namespace) -> int:
+def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: str = "") -> tuple[str, str]:
+    """Record a person's verdict, and the reason behind it as project knowledge.
+    Returns (rule id, what was learned or ""). Raises KeyError for an unknown finding,
+    ValueError for an unusable reason. Shared by the CLI and the terminal interface."""
     from rempart.history import History
-    from rempart.knowledge import FILE, Knowledge
+    from rempart.knowledge import Knowledge
 
-    verdict = "fp" if args.fp else "tp" if args.tp else "accepted"
-    if args.because and verdict == "tp":
-        print("rempart: --because explains why a finding is not a problem; use it with --fp or --accept", file=sys.stderr)
-        return 2
-    root = Path(args.path).resolve()
+    if because and verdict == "tp":
+        raise ValueError("--because explains why a finding is not a problem; use it with --fp or --accept")
     project = _project_id(root)
     hist = History()
     try:
         learned = ""
-        if args.because:
-            kind, _, value = args.because.partition(":")
-            row = hist.finding_row(project, args.id)
+        if because:
+            kind, _, value = because.partition(":")
+            row = hist.finding_row(project, finding_id)
             if row is None:
-                raise KeyError(f"unknown fingerprint {args.id} for {project}; run a scan first")
+                raise KeyError(f"unknown fingerprint {finding_id} for {project}; run a scan first")
             knowledge = Knowledge.load(root)
-            try:
-                learned = knowledge.learn(kind.strip(), value.strip(), row["rule_id"], f"{row['path']}:{row['line']}")
-            except ValueError as exc:
-                print(f"rempart: {exc}", file=sys.stderr)
-                return 2
+            learned = knowledge.learn(kind.strip(), value.strip(), row["rule_id"], f"{row['path']}:{row['line']}")
             knowledge.save(root)
-        note = " · ".join(x for x in (args.note or "", f"because {args.because}" if args.because else "") if x)
-        rule_id = hist.triage(project, args.id, verdict, note)
-    except KeyError as exc:
-        print(f"rempart: {exc}", file=sys.stderr)
-        return 2
+        note = " · ".join(x for x in (note, f"because {because}" if because else "") if x)
+        return hist.triage(project, finding_id, verdict, note), learned
     finally:
         hist.close()
+
+
+def cmd_triage(args: argparse.Namespace) -> int:
+    from rempart.knowledge import FILE
+
+    verdict = "fp" if args.fp else "tp" if args.tp else "accepted"
+    try:
+        rule_id, learned = triage(Path(args.path).resolve(), args.id, verdict, args.note or "", args.because or "")
+    except (KeyError, ValueError) as exc:
+        print(f"rempart: {str(exc).strip(chr(39))}", file=sys.stderr)
+        return 2
     print(f"Recorded {verdict.upper()} for {args.id} ({rule_id}). Future scans will use it.")
     if learned:
         print(f"Learned: {learned}. Every future scan of this repository applies it ({FILE}; commit it to share).")
@@ -642,6 +662,12 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--effort", default="high", choices=["low", "medium", "high", "xhigh", "max"])
     ev.add_argument("--json", help="also write the detailed results to this file")
     ev.set_defaults(func=cmd_agent_eval)
+
+    tu = sub.add_parser("tui", help="interactive terminal interface: scan, browse, triage and teach in one screen")
+    tu.add_argument("path", nargs="?", default=".")
+    tu.add_argument("--offline", action="store_true", help="start without OSV/KEV/EPSS lookups (toggle with o)")
+    tu.add_argument("--prod-only", action="store_true", help="ignore dependencies only used to build or test")
+    tu.set_defaults(func=cmd_tui)
 
     bn = sub.add_parser("bench", help="measure detection per domain on a labelled corpus (the bundled one by default)")
     bn.add_argument("--corpus", help="directory of labelled cases (see rempart/bench.py for the label format)")

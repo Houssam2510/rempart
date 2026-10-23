@@ -10,7 +10,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Protocol
+from typing import Any, Callable, Iterable, Iterator, Protocol
 
 from rempart.config import Config
 from rempart.models import DOMAINS, Finding, Rule, Severity
@@ -215,18 +215,21 @@ def run_scan(
     offline: bool = False,
     correlate: bool = True,
     verify_secrets: bool = False,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> ScanResult:
+    """`progress(step, done, total)`, when given, is called before each scanner runs."""
     from rempart.knowledge import Knowledge, using
 
     with using(Knowledge.load(root)) as knowledge:
-        result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets)
+        result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets, progress=progress)
         result.knowledge_digest = knowledge.digest()
         if correlate:
             result.add_attack_paths()
     return result
 
 
-def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: bool, verify_secrets: bool) -> ScanResult:
+def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: bool, verify_secrets: bool,
+              progress: Callable[[str, int, int], None] | None = None) -> ScanResult:
     start = time.monotonic()
     files, tracked = discover(root, config)
     ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline, verify_secrets=verify_secrets)
@@ -235,7 +238,9 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
     suppressed = 0
     ignored: list[Finding] = []
     seen: set[str] = set()
-    for scanner in scanners:
+    for i, scanner in enumerate(scanners):
+        if progress is not None:
+            progress(scanner.name, i, len(scanners))
         try:
             produced = list(scanner.scan(ctx))
         except Exception as exc:  # one broken scanner must not hide the others' results

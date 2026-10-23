@@ -26,7 +26,7 @@ jobs:
         shell: bash  # explicit bash enables -o pipefail, so a failing test fails the step through tee
         run: |
           python -m unittest discover -s tests -t . -v 2>&1 | tee test.log
-          ! grep -E "skipped '(boto3|anthropic|botocore)" test.log
+          ! grep -E "skipped '(boto3|anthropic|botocore|textual)" test.log
       - name: Detection bench (fails on any precision or recall drop in any domain)
         run: rempart bench --check bench/baseline.json -v
 
