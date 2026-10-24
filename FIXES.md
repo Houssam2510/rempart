@@ -132,3 +132,31 @@ Les 50 s de django en phase 0 ne sont pas comparables : le scanner de code y pla
 
 - `tests/test_tui.py` (R5) : deux tests supposaient que la chaîne était la première action. Une chaîne seulement corrélée est désormais au plus HIGH, donc une découverte CRITICAL peut passer devant. Les tests cherchent l'action de la chaîne et vérifient qu'aucune action de sévérité inférieure ou égale ne la précède.
 - `tests/test_agent.py` (R6) : la table `OPS` était un littéral, que le moteur résout maintenant (l'`eval` n'y voit que des constantes). Elle est construite par `dict(...)`, pour garder la prémisse du test (un `eval` que l'analyse statique ne peut pas trancher). Les assertions sont inchangées.
+
+## Phase 3 — honnêteté des mesures et du README
+
+| Point demandé | Statut | Commit | Test / preuve | Reste incomplet |
+|---|---|---|---|---|
+| `bench/owasp_python.py` affiche les deux scores | fait | `7129344` | `tests/test_owasp_script.py` (vu en échec avant) ; exécuté : 99,4 (alertes) / 87,7 (INFO compté) | — |
+| Job CI nightly qui échoue en cas de régression | fait | `64fc3ce` | `RegressionCheckTest` (3, vus en échec avant) ; `--check bench/realworld/baseline.json` exécuté localement : aucune régression | **Non vérifié sur GitHub** : rien n'a été poussé, le workflow n'a jamais tourné sur un runner. Il échoue aussi sur un résultat non étiqueté du top 10, par choix : la précision n'est pas fiable tant qu'il n'est pas lu. |
+| Légende de la démo (4 linked, 2 correlated) | fait | `f119c8b` | scan exécuté : 4 chaînes avec route (CRITICAL), 2 sans (HIGH) | L'ancienne capture ne correspondait plus à la sortie (R5 : chaîne debug HIGH, compteurs 16/19/17/10/1). Elle est redessinée à partir d'un vrai scan par `scripts/render_demo.py` (Pillow, hors dépendances de Rempart). |
+| « 10 scanners de dépôt + images, cloud et web » | fait | `f119c8b` | `ALL_SCANNERS` : 10 | — |
+| Répartition des règles | fait | `f119c8b` | introspection de `load_all_rules()` : **319** = 233 dépôt + 68 en direct (AWS 29, GCP/Azure 22, web 17) + 11 images + 7 techniques | 319 et non 316 : `GHA-ENV-INJECTION` (R5) et les 2 règles du domaine `scan` (F2) sont nouvelles ; 17 domaines. |
+| « 8 % → 80 % » | retiré | `f119c8b` | — | Le README dit pourquoi il a été retiré (dépôts privés, contredit par la mesure publique). Il reste dans `CHANGELOG.md` (historique, non modifié). |
+| cspm-lite « 9/9 en live, 5/9 en statique » | fait | `f119c8b` | statique **exécuté** sur `cspm-lite@64266df` `lab/` : 5/9 + 2 chaînes | Le 9/9 en direct est **non vérifié** (aucun compte AWS) ; le README le dit. |
+| Promesse MCP exacte | fait | `f119c8b` | relu contre `mcp_server.py` et les tests F3/F8 | Ajouté : `rempart_image_scan` peut tirer une image de n'importe quel registre joignable, y compris interne. |
+| Section Limites | réécrite | `f119c8b` | — | Elle commence par la précision faible sur code jamais vu. |
+| Tableau « Précision sur code jamais vu » | fait | `f119c8b` | `bench/realworld.py --stress -v` exécuté | La colonne « après » porte sur l'ensemble de réglage : le README le dit. Le holdout est en phase 5. |
+
+Correctif trouvé en refaisant la capture : la narration des chaînes écrivait « oS command built from dynamic input » (R5 met la première lettre du titre en minuscule). Corrigé avec test (`059cff6`, `R5ChainsTest.test_a_title_starting_with_an_acronym_keeps_it`).
+
+### Mesures après la phase 3 — exécuté sur `f119c8b`
+
+| Mesure | Après P2 | Après P3 |
+|---|---|---|
+| Tests | 236 OK | **241 OK** |
+| Bench interne | 100 % / 98,9 % | 100 % / 98,9 % (`--check` : aucune régression) |
+| OWASP sans INFO / avec INFO | 99,4 / 87,7 | 99,4 / 87,7 (le script imprime maintenant les deux) |
+| Bench réel strict / large | 50 % / 75 % | 50 % / 75 % (`--check bench/realworld/baseline.json` : aucune régression) |
+| django | 0 plantage, 109 s | 0 plantage, 109 s |
+| Dogfooding | exit 0 | exit 0 |
