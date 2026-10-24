@@ -614,5 +614,21 @@ class F9SearchCannotHangTest(IsolatedHome):
         self.assertIn("regex", schema["required"])
 
 
+class SelfScanPinnedActionsTest(unittest.TestCase):
+    """AUDIT.md, self-scan: every third-party action of Rempart's own workflows is pinned to a commit."""
+
+    def test_every_uses_is_a_full_commit_sha(self):
+        import re
+
+        root = Path(__file__).resolve().parents[1]
+        bad = []
+        for wf in sorted((root / ".github" / "workflows").glob("*.y*ml")):
+            for n, line in enumerate(wf.read_text().splitlines(), 1):
+                m = re.search(r"uses:\s*([^\s#]+)", line)
+                if m and not m.group(1).startswith("./") and not re.search(r"@[0-9a-f]{40}$", m.group(1)):
+                    bad.append(f"{wf.name}:{n}: {m.group(1)}")
+        self.assertEqual(bad, [])
+
+
 if __name__ == "__main__":
     unittest.main()
