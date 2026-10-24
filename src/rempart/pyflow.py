@@ -327,8 +327,9 @@ class FunctionFlow:
 
     def __init__(self, report: Report, *, route: str = "", tainted_params: set[str] | None = None, imports: set[str] | None = None,
                  index: ProjectIndex | None = None, summary_params: list[str] | None = None, local_classes: set[str] | None = None,
-                 scope: ModuleScope | None = None, current_class: str = "") -> None:
+                 scope: ModuleScope | None = None, current_class: str = "", local_names: set[str] | None = None) -> None:
         self.report = report
+        self.local_names = local_names or set()  # parameters and names bound in this function: they shadow imports
         self.scope = scope or ModuleScope()
         self.current_class = current_class
         self.types: dict[str, str] = {}  # variable -> qualified class, for `x = Cls(...)` then `x.method()`
@@ -567,8 +568,17 @@ class FunctionFlow:
             return CLEAN
         return None
 
+    def _canonical(self, name: str) -> str:
+        """`system` after `from os import system` is os.system; `sp.run` after `import
+        subprocess as sp` is subprocess.run. A local variable of that name is not the import."""
+        head, dot, rest = name.partition(".")
+        target = self.scope.aliases.get(head)
+        if not target or head in self.env or head in self.local_names or target == head:
+            return name
+        return target + (dot + rest if dot else "")
+
     def _call(self, node: ast.Call, check: bool) -> Val:
-        name = dotted(node.func)
+        name = self._canonical(dotted(node.func))
         short = name.rsplit(".", 1)[-1]
         args = [self.ev(a, check) for a in node.args]
         kwargs = {k.arg: self.ev(k.value, check) for k in node.keywords if k.arg}
@@ -1083,6 +1093,18 @@ def _imports_of(tree: ast.Module) -> set[str]:
     return imports
 
 
+def local_names(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Names a function binds itself (parameters, assignments, loop and with targets, nested defs)."""
+    a = fn.args
+    names = {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs} | {x.arg for x in (a.vararg, a.kwarg) if x}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not fn:
+            names.add(node.name)
+    return names
+
+
 def _defs(tree: ast.Module) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]]:
     """Top-level functions (class "") and methods (their class name)."""
     out: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]] = []
@@ -1120,7 +1142,7 @@ def build_index(modules: dict[str, ast.Module], rounds: int = 3) -> ProjectIndex
                         _sinks.append((cat, vals, getattr(node, "lineno", 0), _rel, msg.split(" (")[0], bool(extra.get("uncertain"))))
 
                 flow = FunctionFlow(_SinkRecorder(record), imports=set(imports), index=index, summary_params=params, scope=scope,
-                                    current_class=cls)
+                                    current_class=cls, local_names=local_names(fn))
                 flow.run(fn.body)
                 ret = join(*flow.returns) if flow.returns else const(None)
                 labels = ret.taint
@@ -1168,4 +1190,4 @@ def analyse_module(tree: ast.Module, report: Callable[[str, ast.AST, str, dict[s
             route = "api"
             params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} - {"self", "cls", "request", "db", "session", "background_tasks", "response"}
         FunctionFlow(report, route=route, tainted_params=params, imports=set(imports), index=index, local_classes=local_classes,
-                     scope=scope, current_class=owner.get(id(fn), "")).run(fn.body)
+                     scope=scope, current_class=owner.get(id(fn), ""), local_names=local_names(fn)).run(fn.body)

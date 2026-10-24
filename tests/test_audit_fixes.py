@@ -704,5 +704,40 @@ class R2SafeResolutionTest(IsolatedHome):
             self.assertEqual(sev, {"CRITICAL"}, path)
 
 
+class R3ImportAliasesTest(IsolatedHome):
+    CASES = {
+        "from os import system": ("from os import system\n", "system('ping ' + request.args['h'])", "CODE-CMD-INJECTION"),
+        "import subprocess as sp": ("import subprocess as sp\n", "sp.run('ping ' + request.args['h'], shell=True)", "CODE-CMD-INJECTION"),
+        "from subprocess import run as r": ("from subprocess import run as r\n", "r('ping ' + request.args['h'], shell=True)", "CODE-CMD-INJECTION"),
+        "import os as o": ("import os as o\n", "o.popen('ping ' + request.args['h'])", "CODE-CMD-INJECTION"),
+        "from pickle import loads as unpack": ("from pickle import loads as unpack\n", "unpack(request.data)", "CODE-UNSAFE-DESERIALIZATION"),
+        "from requests import get as fetch": ("from requests import get as fetch\n", "fetch(request.args['u'], timeout=5)", "CODE-SSRF"),
+        "import yaml as y": ("import yaml as y\n", "y.load(request.data, Loader=y.Loader)", "CODE-UNSAFE-DESERIALIZATION"),
+    }
+
+    def test_aliased_sinks_are_recognised(self):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        missed = []
+        for i, (label, (imp, call, rule)) in enumerate(self.CASES.items()):
+            root = self.project(f"r3-{i}", {"app.py": imp + "from flask import request\n\n\ndef f():\n    return " + call + "\n"})
+            findings = run_scan(root, [ALL_SCANNERS["code"]], Config(), offline=True, correlate=False).findings
+            if not any(f.rule.id == rule and f.severity.name in ("CRITICAL", "HIGH") for f in findings):
+                missed.append(label)
+        self.assertEqual(missed, [])
+
+    def test_a_local_name_shadowing_an_import_is_not_the_imported_sink(self):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project("r3-shadow", {"app.py": "from os import system\nfrom flask import request\n\n\n"
+                                                    "def f(system=print):\n    return system('x ' + request.args['h'])\n"})
+        findings = run_scan(root, [ALL_SCANNERS["code"]], Config(), offline=True, correlate=False).findings
+        self.assertFalse([f for f in findings if f.rule.id == "CODE-CMD-INJECTION" and f.severity.name == "CRITICAL"])
+
+
 if __name__ == "__main__":
     unittest.main()
