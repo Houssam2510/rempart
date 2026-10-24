@@ -78,6 +78,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
             return 2
     if args.skip:
         names = [n for n in names if n not in {s.strip() for s in args.skip.split(",")}]
+    if args.verify_secrets:
+        from rempart.verify import WARNING
+
+        print(f"rempart: {WARNING}", file=sys.stderr)
     result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline, correlate=False,
                       verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None, knowledge=knowledge)
     result.allow_errors = args.allow_scanner_errors

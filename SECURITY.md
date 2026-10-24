@@ -9,7 +9,7 @@ Please report vulnerabilities in Rempart privately through GitHub's **Report a v
 | Command | Destination | What is sent |
 |---|---|---|
 | `scan` (default) | OSV.dev, FIRST EPSS, CISA KEV | package names and versions; CVE identifiers. No code, paths or secrets. |
-| `scan --verify-secrets` | each credential's own provider (GitHub, Stripe, AWS STS…) | one read-only identity request authenticated **with the found credential**. Only use it on repositories you own. |
+| `scan --verify-secrets` | each credential's own provider (GitHub, Stripe, AWS STS…) | one read-only identity request authenticated **with the found credential**. Opt-in only, never from MCP; a warning is printed each time. **Only use it on repositories you own or are authorised to test**: using someone else's credential can be an offence. AWS keys are checked with `sts:GetCallerIdentity`, which is logged in the key owner's CloudTrail and trips **canarytokens** and **GuardDuty** alerts (that is their purpose). The credential travels in a header or a signed body, except where the provider accepts it nowhere else: `SEC-TELEGRAM-BOT` (token in the URL path of the Bot API) and `SEC-MAPBOX-SECRET` (`access_token` query parameter); for those two it may appear in access logs on the provider's side. |
 | `image` | the image's registry | standard pull requests (manifest, config, layers). |
 | `cloud aws` | AWS APIs of your account | read-only Describe/Get/List calls with your credentials. |
 | `cloud gcp` / `cloud azure` | Google Cloud / Azure APIs, through your own `gcloud` / `az` | read-only list/describe/get-iam-policy commands with the identity the CLI is logged in as. |

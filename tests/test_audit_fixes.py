@@ -477,5 +477,42 @@ class F6AgentOutputsTest(IsolatedHome):
         self.assertFalse((out / "test_bad.py").exists())
 
 
+class F7LiveVerificationTest(IsolatedHome):
+    def test_opt_in_prints_a_legal_and_alerting_warning(self):
+        root = self.project("p", {"app.py": "x = 1\n"})
+        _, _, err = run_cli("scan", str(root), "--offline", "--only", "secrets", "--verify-secrets")
+        low = err.lower()
+        self.assertIn("own", low)
+        self.assertIn("canary", low)
+        self.assertIn("guardduty", low)
+        _, _, quiet = run_cli("scan", str(root), "--offline", "--only", "secrets")
+        self.assertNotIn("canary", quiet.lower())
+
+    def test_tokens_travel_in_headers_except_where_the_provider_allows_nothing_else(self):
+        import urllib.request
+
+        from rempart import verify
+
+        token = "tok_" + "Zq7Xr2Lm9Wk4Tn8Vp3Hs6Dc1Yb5Fg0Jt"
+        in_url = set()
+        for rule_id in verify.SUPPORTED:
+            seen: list[urllib.request.Request] = []
+
+            def http(req, seen=seen):
+                seen.append(req)
+                return 401, b"{}"
+
+            run = verify.checker(rule_id, token if rule_id != "SEC-AWS-ACCESS-KEY" else "AKIA" + "Z7QXRT2MWPLK4N8J", "")
+            run(http)
+            if any(token in r.full_url for r in seen):
+                in_url.add(rule_id)
+        self.assertEqual(in_url, set(verify.TOKEN_IN_URL))
+        doc = (Path(__file__).resolve().parents[1] / "SECURITY.md").read_text()
+        for rule_id in verify.TOKEN_IN_URL:
+            self.assertIn(rule_id, doc)
+        self.assertIn("canarytokens", doc.lower())
+        self.assertIn("GuardDuty", doc)
+
+
 if __name__ == "__main__":
     unittest.main()

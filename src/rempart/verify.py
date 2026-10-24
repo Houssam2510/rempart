@@ -132,8 +132,25 @@ def _aws(access_key: str, file_text: str) -> Callable[[Http], Verdict]:
     return run
 
 
+# Providers whose API accepts the credential nowhere but in the URL. Every other check sends
+# it in a header or a signed body, so it never lands in proxy or server access logs.
+TOKEN_IN_URL = {
+    "SEC-TELEGRAM-BOT": "the Bot API only takes the token in the URL path (https://api.telegram.org/bot<token>/getMe)",
+    "SEC-MAPBOX-SECRET": "the Tokens API only takes the token as the access_token query parameter",
+}
+
+WARNING = ("--verify-secrets sends each credential found to its own provider (read-only identity call). Only use it on repositories "
+           "you own or are authorised to test: using someone else's credential can be an offence. AWS keys are checked with "
+           "sts:GetCallerIdentity, which is logged in the key owner's CloudTrail and trips canarytokens and GuardDuty alerts.")
+
+
 def checker(rule_id: str, token: str, file_text: str) -> Callable[[Http], Verdict] | None:
-    table: dict[str, Callable[[], Callable[[Http], Verdict]]] = {
+    make = _table(token, file_text).get(rule_id)
+    return make() if make else None
+
+
+def _table(token: str, file_text: str) -> dict[str, Callable[[], Callable[[Http], Verdict]]]:
+    return {
         "SEC-AWS-ACCESS-KEY": lambda: _aws(token, file_text),
         "SEC-GITHUB-TOKEN": lambda: _bearer("https://api.github.com/user", token, lambda d: f"GitHub user {d.get('login', '?')}"),
         "SEC-GITLAB-TOKEN": lambda: _bearer("https://gitlab.com/api/v4/personal_access_tokens/self", token, lambda d: f"token '{d.get('name', '?')}' scopes {d.get('scopes')}", header="PRIVATE-TOKEN", prefix=""),
@@ -159,8 +176,9 @@ def checker(rule_id: str, token: str, file_text: str) -> Callable[[Http], Verdic
         "SEC-MAPBOX-SECRET": lambda: _bearer(f"https://api.mapbox.com/tokens/v2?access_token={token}", "", lambda d: f"Mapbox token {d.get('code', '?')}"),
         "SEC-NEWRELIC-KEY": lambda: _bearer("https://api.newrelic.com/v2/users.json", token, lambda d: "New Relic key accepted", header="Api-Key", prefix=""),
     }
-    make = table.get(rule_id)
-    return make() if make else None
+
+
+SUPPORTED = tuple(_table("", ""))
 
 
 _cache: dict[tuple[str, str], Verdict] = {}
