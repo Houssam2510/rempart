@@ -687,6 +687,22 @@ class R2SafeResolutionTest(IsolatedHome):
         }
         self.assertEqual([f for f in self.code_findings(files) if f.rule.id == "CODE-XSS-SINK"], [])
 
+    def test_an_inherited_method_is_a_certain_resolution(self):
+        # Cls.m where m is defined on a project base class: the dict it returns is JSON, not HTML,
+        # and a sink inside it keeps its full severity
+        files = {
+            "mixins.py": "class Paged(object):\n    @staticmethod\n    def page(rows, n):\n        return {'items': rows, 'page': n}\n\n"
+                         "    def purge(self, key):\n        self.conn.execute('DELETE FROM t WHERE k = ' + key)\n",
+            "views.py": "from flask import Flask, request\nfrom mixins import Paged\n\napp = Flask(__name__)\n\n\nclass Item(Paged):\n    pass\n\n\n"
+                        "@app.get('/a')\ndef a():\n    return Item.page([], request.args['n'])\n\n\n"
+                        "@app.post('/b')\ndef b():\n    Item().purge(request.form['k'])\n    return 'ok'\n",
+        }
+        found = self.code_findings(files)
+        self.assertEqual([f for f in found if f.rule.id == "CODE-XSS-SINK"], [])
+        sqli = [f for f in found if f.rule.id == "CODE-SQL-INJECTION" and f.path == "views.py"]
+        self.assertTrue(sqli)
+        self.assertNotIn("by name only", sqli[0].message)
+
     def test_a_unique_name_only_match_is_capped_and_says_so(self):
         files = {
             "cache.py": "class Cache:\n    def purge(self, key):\n        self.conn.execute('DELETE FROM cache WHERE k = ' + key)\n",

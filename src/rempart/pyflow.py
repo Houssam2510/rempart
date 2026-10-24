@@ -333,6 +333,7 @@ class ProjectIndex:
         self.functions: dict[str, list[Summary]] = {}
         self.classes: set[str] = set()
         self.by_qual: dict[str, Summary] = {}  # "pkg.mod.func" or "pkg.mod.Class.method"
+        self.bases: dict[str, list[str]] = {}  # "pkg.mod.Class" -> qualified names of its bases, in order
 
     def add(self, summ: Summary) -> None:
         self.functions.setdefault(summ.name, []).append(summ)
@@ -346,6 +347,26 @@ class ProjectIndex:
         short = qualified.rsplit(".", 1)[-1]
         hits = [s for s in self.functions.get(short, []) if ".".join(p for p in (s.module, s.cls, s.name) if p).endswith("." + qualified)]
         return hits[0] if len(hits) == 1 else None
+
+    def method(self, owner: str, short: str) -> Summary | None:
+        """`short` looked up on the class `owner` and then on its project bases, in order,
+        as Python finds an attribute (inherited methods are certain resolutions too)."""
+        seen: set[str] = set()
+        todo = [owner]
+        while todo and len(seen) < 32:
+            cls = todo.pop(0)
+            if cls in seen:
+                continue
+            seen.add(cls)
+            hit = self.find(f"{cls}.{short}")
+            if hit:
+                return hit
+            if cls in self.bases:
+                todo += self.bases[cls]
+            else:  # src/ layouts: a unique suffix, as find() does
+                known = [k for k in self.bases if k.endswith("." + cls)]
+                todo += self.bases[known[0]] if len(known) == 1 else []
+        return None
 
     def by_name_only(self, short: str) -> Summary | None:
         """A method chosen by its name alone: only when exactly one exists in the project and
@@ -795,11 +816,11 @@ class FunctionFlow:
             return None
         recv = node.func.value
         if isinstance(recv, ast.Name) and recv.id in self.types:
-            hit = self.index.find(f"{self.types[recv.id]}.{short}")
+            hit = self.index.method(self.types[recv.id], short)
             if hit:
                 return hit, True
         if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and self.current_class:
-            hit = self.index.find(".".join(p for p in (mod, self.current_class, short) if p))
+            hit = self.index.method(".".join(p for p in (mod, self.current_class) if p), short)
             if hit:
                 return hit, True
         elif isinstance(recv, (ast.Name, ast.Attribute)) and not isinstance(recv, ast.Call):
@@ -810,7 +831,7 @@ class FunctionFlow:
                     return hit, True
         owner = self._class_of(recv)
         if owner:
-            hit = self.index.find(f"{owner}.{short}")
+            hit = self.index.method(owner, short)
             if hit:
                 return hit, True
         hit = self.index.by_name_only(short)
@@ -1252,11 +1273,23 @@ def _defs(tree: ast.Module) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef
 def build_index(modules: dict[str, ast.Module], rounds: int = 3) -> ProjectIndex:
     """Summarise every top-level function and method; repeat so summaries can use each other."""
     index = ProjectIndex()
-    for tree in modules.values():
+    for rel, tree in modules.items():
         index.classes |= {n.name for n in tree.body if isinstance(n, ast.ClassDef)}
+        scope = scope_of(rel, tree)
+        for n in tree.body:
+            if isinstance(n, ast.ClassDef):
+                bases = []
+                for b in n.bases:
+                    head, _, rest = dotted(b).partition(".")
+                    if not rest and head in scope.classes:
+                        bases.append(f"{scope.module}.{head}" if scope.module else head)
+                    elif head in scope.aliases:
+                        bases.append(scope.aliases[head] + (f".{rest}" if rest else ""))
+                index.bases[f"{scope.module}.{n.name}" if scope.module else n.name] = bases
     for _ in range(rounds):
         fresh = ProjectIndex()
         fresh.classes = index.classes
+        fresh.bases = index.bases
         for rel, tree in modules.items():
             imports = _imports_of(tree)
             scope = scope_of(rel, tree)
