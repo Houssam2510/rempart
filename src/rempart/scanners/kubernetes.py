@@ -51,6 +51,20 @@ DANGEROUS_CAPS = {"ALL", "SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "
 DATA_PORTS = {3306, 5432, 27017, 6379, 9200, 11211, 1433, 5984, 9042, 7474, 9092, 2181}
 
 
+# A variable that names or locates a secret is not the secret (AUDIT.md R6).
+_REFERENCE_NAME = re.compile(r"(?i)(?:^|_)(?:name|id|path|file|dir|ref|arn|version|enabled|length|ttl|header|type|mode|region|key_?id)$")
+
+
+def _template_value(value: str) -> bool:
+    """A value meant to be replaced before deployment, not a credential: an all-caps token
+    (API_KEY_VAL, REPLACE_ME), ${...} / $(...) / {{...}} / <...> placeholders, or a value the
+    secrets scanner already treats as a placeholder."""
+    from rempart.scanners.secrets import _PLACEHOLDER
+
+    v = value.strip()
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9_]*", v) or re.fullmatch(r"\$\{[^}]*\}|\$\([^)]*\)|\{\{.*\}\}|<[^>]+>", v) or _PLACEHOLDER.match(v))
+
+
 def pod_spec(doc: dict[str, Any]) -> dict[str, Any] | None:
     kind = doc.get("kind")
     spec = doc.get("spec") or {}
@@ -166,5 +180,6 @@ class KubernetesScanner:
             if image and "@sha256:" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest")):
                 yield F(R_IMAGE, f"{cw} image `{image}` not pinned.", image)
             for e in c.get("env") or []:
-                if isinstance(e, dict) and re.search(r"(?i)password|secret|token|api_?key|private_?key", str(e.get("name", ""))) and e.get("value"):
+                if isinstance(e, dict) and re.search(r"(?i)password|secret|token|api_?key|private_?key", str(e.get("name", ""))) and e.get("value") \
+                        and not _REFERENCE_NAME.search(str(e.get("name", ""))) and not _template_value(str(e.get("value"))):
                     yield F(R_ENV_SECRET, f"{cw} env {e.get('name')} is a literal.", str(e.get("name")))

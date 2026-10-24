@@ -1036,6 +1036,32 @@ func helper(name string) {
                 self.assertEqual(sqli.get(where), "MEDIUM", where)
 
 
+    def test_kubernetes_template_values_and_secret_references_are_not_secrets(self):
+        manifest = """apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api}
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          image: org/api:1.0.0
+          env:
+            - name: GOOGLE_API_KEY
+              value: GOOGLE_API_KEY_VAL
+            - name: DB_SECRET_NAME
+              value: prod-db-credentials
+            - name: API_TOKEN
+              value: "${API_TOKEN}"
+            - name: DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: db, key: password}}
+            - name: STRIPE_SECRET
+              value: sk_q8Zr2Lx7Wm4Tn9Vk3Hp6
+"""
+        found = [f for f in self.findings({"k8s/api.yaml": manifest}, ("kubernetes",)) if f.rule.id == "K8S-SECRET-IN-ENV"]
+        self.assertEqual([f.message.split(" env ")[1].split(" ")[0] for f in found], ["STRIPE_SECRET"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
