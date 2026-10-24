@@ -96,6 +96,10 @@ JSON-RPC 2.0 over stdio, newline-delimited. It implements `initialize` (protocol
 | `quality.py` | AST complexity, fail-open handlers, N+1 detection inside loop bodies. |
 | `web.py` | `http.client` + `ssl`: redirects, headers, cookies, legacy TLS probes, certificate expiry, security.txt, warm/cold TTFB. |
 
+## File kinds (`filekind.py`)
+
+After the scanners run, every finding's file is classified from its path (and, for JavaScript/CSS, whether its lines are minified): `app`, `test`, `dev` (settings/dev*, *.local.*, compose files that run a development server or mount the source tree, `*initdb.d/`, seeds), `example` (examples/, samples/, demo/, docs/ code), `vendored` (vendor/, third_party/, static/**/lib/, bundles, minified files) or `docs` (prose). Vendored files lose their code, data, quality, performance and AI findings; prose loses code, data, quality and performance findings; dev and example findings drop one level (provider-format credentials in dev files keep theirs; secrets in example paths are lowered once, by the secrets scanner). Only `app` findings can be a stage of an attack path. The heuristics are listed in the module docstring (AUDIT.md R4).
+
 ## Network and caching
 
 `netcache.py` wraps `urllib` with an on-disk JSON cache under `REMPART_HOME/cache` (OSV batch 6 h, advisory details 3 days, KEV 12 h, EPSS 24 h). An unwritable cache never blocks a lookup. `--offline` skips every network call and emits one INFO finding saying so.

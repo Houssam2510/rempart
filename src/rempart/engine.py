@@ -317,6 +317,10 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
                 continue
             seen.add(key)
             findings.append(f)
+    from rempart import filekind
+
+    findings, dropped = filekind.apply(findings, ctx.text)  # vendored, docs, dev, example files (AUDIT.md R4)
+    suppressed += dropped
     findings.sort(key=lambda f: (-f.risk, f.path, f.line))
     from rempart.correlate import context_signals
     from rempart.graph import build_graph
@@ -328,7 +332,7 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
         duration_s=round(time.monotonic() - start, 2),
         scanners=[s.name for s in scanners],
         suppressed=suppressed,
-        context=context_signals(files, ctx.text),
+        context=filekind.apply(context_signals(files, ctx.text), ctx.text)[0],
         graph=build_graph(files, ctx.text),
         files=files,
         ignored=ignored,

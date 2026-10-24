@@ -739,5 +739,67 @@ class R3ImportAliasesTest(IsolatedHome):
         self.assertFalse([f for f in findings if f.rule.id == "CODE-CMD-INJECTION" and f.severity.name == "CRITICAL"])
 
 
+class R4FileKindsTest(IsolatedHome):
+    def scan(self, files, scanners=None):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r4-{len(list(self.tmp.iterdir()))}", files)
+        names = scanners or list(ALL_SCANNERS)
+        return run_scan(root, [ALL_SCANNERS[n] for n in names], Config(), offline=True)
+
+    def sev(self, result, rule, path):
+        return {f.severity.name for f in result.findings if f.rule.id == rule and f.path == path}
+
+    def test_vendored_and_minified_code_is_not_your_code(self):
+        minified = "!function(e){" + ";".join(f"var a{i}=eval(e.x{i})" for i in range(120)) + "}(window);\n"
+        res = self.scan({"static/js/lib/loader.js": minified, "vendor/pkg/run.js": "eval(window.name);\n",
+                         "assets/app.bundle.js": "eval(location.hash);\n", "src/app.js": "eval(location.hash.slice(1));\n"}, ["code"])
+        paths = {f.path for f in res.findings if f.rule.id == "CODE-EVAL"}
+        self.assertEqual(paths, {"src/app.js"})
+
+    def test_development_files_lose_one_level(self):
+        res = self.scan({
+            "proj/settings/dev.py": "DEBUG = True\n",
+            "proj/settings/production.py": "DEBUG = True\n",
+            "docker-compose.yml": "services:\n  web:\n    build: .\n    command: python manage.py runserver 0.0.0.0:8000\n"
+                                  "    volumes:\n      - .:/app\n    environment:\n      - SECRET_KEY=foo-bar-baz-123\n",
+            "deploy/compose.prod.yml": "services:\n  web:\n    image: org/web:1.2.3\n    environment:\n      - SECRET_KEY=foo-bar-baz-123\n",
+            "docker/initdb.d/01_users.sql": "CREATE USER app WITH PASSWORD 'devpass123';\n",
+            "db/schema.sql": "CREATE USER app WITH PASSWORD 'devpass123';\n",
+        })
+        self.assertEqual(self.sev(res, "CODE-DEBUG-ENABLED", "proj/settings/dev.py"), {"MEDIUM"})
+        self.assertEqual(self.sev(res, "CODE-DEBUG-ENABLED", "proj/settings/production.py"), {"HIGH"})
+        dev, prod = self.sev(res, "COMPOSE-SECRET-LITERAL", "docker-compose.yml"), self.sev(res, "COMPOSE-SECRET-LITERAL", "deploy/compose.prod.yml")
+        self.assertTrue(dev and prod and max(dev) != max(prod), (dev, prod))
+        self.assertEqual(self.sev(res, "DATA-SQL-LITERAL-PASSWORD", "docker/initdb.d/01_users.sql"), {"MEDIUM"})
+        self.assertEqual(self.sev(res, "DATA-SQL-LITERAL-PASSWORD", "db/schema.sql"), {"HIGH"})
+        kinds = {f.path: f.extra.get("file_kind") for f in res.findings}
+        self.assertEqual(kinds.get("proj/settings/dev.py"), "dev")
+
+    def test_examples_lose_exactly_one_level(self):
+        from tests.helpers import FAKE_AWS_KEY
+
+        tf = 'resource "aws_instance" "a" {\n  ami = "x"\n  metadata_options {\n    http_tokens = "optional"\n  }\n}\n'
+        res = self.scan({"examples/demo/main.tf": tf, "main.tf": tf, "examples/demo/conf.py": f"KEY = '{FAKE_AWS_KEY}'\n"})
+        self.assertEqual(self.sev(res, "TF-EC2-IMDSV1", "examples/demo/main.tf"), {"MEDIUM"})
+        self.assertEqual(self.sev(res, "TF-EC2-IMDSV1", "main.tf"), {"HIGH"})
+        # the secrets scanner already lowers example paths once: never twice
+        self.assertEqual(self.sev(res, "SEC-AWS-ACCESS-KEY", "examples/demo/conf.py"), {"HIGH"})
+
+    def test_prose_does_not_trigger_code_or_data_rules(self):
+        res = self.scan({"docs/db.md": "Connect with `postgres://db/app?sslmode=disable` for local tests, or call eval(input()).\n",
+                         "CLAUDE.md": "# rules\n- be nice" + "\u200b" * 5 + "\n"})
+        self.assertFalse([f for f in res.findings if f.path == "docs/db.md" and f.rule.domain in ("code", "data")])
+
+    def test_development_and_example_files_cannot_feed_a_chain(self):
+        app = "from flask import Flask\napp = Flask(__name__)\n\nif __name__ == '__main__':\n    app.run(host='0.0.0.0', debug=True)\n"
+        res = self.scan({"examples/demo/app.py": app})
+        self.assertFalse([f for f in res.findings if f.rule.domain == "attack-path"])
+        res = self.scan({"app.py": app})
+        self.assertTrue([f for f in res.findings if f.rule.id == "CHAIN-DEBUG-CONSOLE-EXPOSED"])
+
+
 if __name__ == "__main__":
     unittest.main()

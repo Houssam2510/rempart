@@ -136,7 +136,10 @@ def _linked_pair(graph: Any, links: list[tuple[str, list[Finding]]]) -> tuple[li
 
 
 def correlate(findings: list[Finding], context: list[Finding] | None = None, graph: Any = None) -> list[Finding]:
-    pool = list(findings) + list(context or [])
+    from rempart.filekind import chainable
+
+    # development, example, test, vendored and documentation files cannot be a stage (AUDIT.md R4)
+    pool = [f for f in list(findings) + list(context or []) if chainable(f)]
     chains: list[Finding] = []
     for chain in CHAINS:
         links: list[tuple[str, list[Finding]]] = []
