@@ -658,5 +658,51 @@ class R1NoCrashTest(unittest.TestCase):
         analyse_module(c, lambda *args: None, index)
 
 
+class R2SafeResolutionTest(IsolatedHome):
+    def code_findings(self, files):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r2-{len(list(self.tmp.iterdir()))}", files)
+        return run_scan(root, [ALL_SCANNERS["code"]], Config(), offline=True, correlate=False).findings
+
+    def test_a_method_call_on_an_unknown_object_is_not_linked_by_name_to_any_method(self):
+        files = {
+            "cache.py": "class Cache:\n    def __init__(self, conn):\n        self.conn = conn\n\n"
+                        "    def clear(self, key):\n        self.conn.execute('DELETE FROM cache WHERE k = ' + key)\n",
+            "store.py": "class Store:\n    def clear(self, key):\n        return None\n",
+            "views.py": "from flask import request\n\n\ndef logout():\n    request.session.clear(request.args['k'])\n    return 'ok'\n",
+        }
+        crit = [f for f in self.code_findings(files) if f.path == "views.py" and f.severity.name == "CRITICAL"]
+        self.assertEqual(crit, [])
+
+    def test_a_unique_name_only_match_is_capped_and_says_so(self):
+        files = {
+            "cache.py": "class Cache:\n    def purge(self, key):\n        self.conn.execute('DELETE FROM cache WHERE k = ' + key)\n",
+            "views.py": "from flask import request\n\n\ndef logout(obj):\n    obj.purge(request.args['k'])\n    return 'ok'\n",
+        }
+        hits = [f for f in self.code_findings(files) if f.path == "views.py" and f.rule.id == "CODE-SQL-INJECTION"]
+        self.assertTrue(hits)
+        self.assertTrue(all(f.severity.name in ("MEDIUM", "LOW", "INFO") for f in hits))
+        self.assertIn("by name only", hits[0].message)
+
+    def test_certain_resolutions_keep_their_full_severity(self):
+        files = {
+            "pkg/__init__.py": "",
+            "pkg/db.py": "import sqlite3\n\n\ndef run(q):\n    return sqlite3.connect('a').execute(q)\n\n\n"
+                         "class Repo:\n    def find(self, k):\n        return sqlite3.connect('a').execute('SELECT * FROM t WHERE k = ' + k)\n\n"
+                         "    def lookup(self, k):\n        return self.find(k)\n",
+            "a.py": "from flask import request\nfrom pkg.db import run\n\n\ndef v():\n    return run('SELECT * FROM t WHERE id = ' + request.args['id'])\n",
+            "b.py": "from flask import request\nimport pkg.db as db\n\n\ndef v():\n    return db.run('SELECT * FROM t WHERE id = ' + request.args['id'])\n",
+            "c.py": "from flask import request\nfrom pkg.db import Repo\n\n\ndef v():\n    return Repo().find(request.args['k'])\n",
+            "d.py": "from flask import request\nfrom pkg import db\n\n\ndef v():\n    return db.Repo().lookup(request.args['k'])\n",
+        }
+        findings = self.code_findings(files)
+        for path in ("a.py", "b.py", "c.py", "d.py"):
+            sev = {f.severity.name for f in findings if f.path == path and f.rule.id == "CODE-SQL-INJECTION"}
+            self.assertEqual(sev, {"CRITICAL"}, path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -902,7 +902,7 @@ class PythonAnalyzer(ast.NodeVisitor):
         self.visit(tree)
         from rempart.pyflow import analyse_module
 
-        analyse_module(tree, self._flow_report, self.index)
+        analyse_module(tree, self._flow_report, self.index, self.rel)
         return self.out
 
     def add(self, r: Rule, node: ast.AST, message: str, severity: Severity | None = None, confidence: float | None = None,
@@ -938,7 +938,13 @@ class PythonAnalyzer(ast.NodeVisitor):
             severity, confidence = Severity.MEDIUM, 0.5
         elif cat == "shell" and extra.get("constant"):
             severity, confidence = Severity.LOW, 0.5
-        self.add(r, node, message, severity=severity, confidence=confidence, extra={"dataflow": "tainted" if tainted else "pattern"})
+        out_extra = {"dataflow": "tainted" if tainted else "pattern"}
+        if extra.get("uncertain"):
+            # the path to the sink went through a call resolved by name only: never CRITICAL or HIGH (AUDIT.md R2)
+            severity = min(severity if severity is not None else r.severity, Severity.MEDIUM)
+            confidence = min(confidence if confidence is not None else r.confidence, 0.5)
+            out_extra["resolution"] = "name-only"
+        self.add(r, node, message, severity=severity, confidence=confidence, extra=out_extra)
 
     # ------------------------------------------------------------ pattern layer
     def visit_Assign(self, node: ast.Assign) -> None:

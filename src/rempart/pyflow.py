@@ -183,6 +183,53 @@ AMBIGUOUS_METHODS = {
 
 
 @dataclass
+class ModuleScope:
+    """What a name means in one file: the module's dotted name, the local names bound by
+    its imports, and the functions and classes it defines at top level."""
+    module: str = ""
+    aliases: dict[str, str] = field(default_factory=dict)  # local name -> qualified name
+    functions: set[str] = field(default_factory=set)
+    classes: set[str] = field(default_factory=set)
+
+
+def module_name(rel: str) -> str:
+    parts = rel.replace("\\", "/").removesuffix(".py").split("/")
+    if parts and parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(p for p in parts if p)
+
+
+def scope_of(rel: str, tree: ast.Module) -> ModuleScope:
+    mod = module_name(rel)
+    is_package = rel.replace("\\", "/").endswith("__init__.py")
+    package = mod if is_package else mod.rpartition(".")[0]
+    scope = ModuleScope(module=mod)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope.functions.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            scope.classes.add(node.name)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    scope.aliases[a.asname] = a.name
+                else:
+                    head = a.name.split(".")[0]
+                    scope.aliases.setdefault(head, head)
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                anchor = package.split(".") if package else []
+                anchor = anchor[:len(anchor) - (node.level - 1)] if node.level > 1 else anchor
+                base = ".".join([*anchor, *([node.module] if node.module else [])])
+            for a in node.names:
+                if a.name != "*":
+                    scope.aliases[a.asname or a.name] = f"{base}.{a.name}" if base else a.name
+    return scope
+
+
+@dataclass
 class Summary:
     name: str
     is_method: bool
@@ -192,7 +239,11 @@ class Summary:
     ret_const: Any = _NOCONST
     ret_constlike: bool = False
     ret_clean: frozenset[str] = frozenset()
-    sinks: list[tuple[str, frozenset[int], int, str, str]] = field(default_factory=list)  # (cat, params, line, file, message)
+    # (cat, params, line, file, message, uncertain): uncertain when the path to the sink went
+    # through a call resolved by name only, so a certain caller cannot launder it
+    sinks: list[tuple[str, frozenset[int], int, str, str, bool]] = field(default_factory=list)
+    module: str = ""
+    cls: str = ""
 
 
 def const_key(value: Any) -> Any:
@@ -217,6 +268,26 @@ class ProjectIndex:
     def __init__(self) -> None:
         self.functions: dict[str, list[Summary]] = {}
         self.classes: set[str] = set()
+        self.by_qual: dict[str, Summary] = {}  # "pkg.mod.func" or "pkg.mod.Class.method"
+
+    def add(self, summ: Summary) -> None:
+        self.functions.setdefault(summ.name, []).append(summ)
+        self.by_qual[".".join(p for p in (summ.module, summ.cls, summ.name) if p)] = summ
+
+    def find(self, qualified: str) -> Summary | None:
+        """The summary of a fully qualified name; a repository laid out under src/ or a
+        sub-directory still matches by suffix, but only when that is unambiguous."""
+        if qualified in self.by_qual:
+            return self.by_qual[qualified]
+        short = qualified.rsplit(".", 1)[-1]
+        hits = [s for s in self.functions.get(short, []) if ".".join(p for p in (s.module, s.cls, s.name) if p).endswith("." + qualified)]
+        return hits[0] if len(hits) == 1 else None
+
+    def by_name_only(self, short: str) -> Summary | None:
+        """A method chosen by its name alone: only when exactly one exists in the project and
+        the name is not a common one. Its results are capped (AUDIT.md R2)."""
+        cands = [s for s in self.functions.get(short, []) if s.is_method]
+        return cands[0] if len(cands) == 1 and short not in AMBIGUOUS_METHODS else None
 
     def lookup(self, short: str, method_call: bool) -> Summary | None:
         cands = self.functions.get(short) or []
@@ -255,8 +326,12 @@ class FunctionFlow:
     """Interpret one function (or module body) and report sink hits."""
 
     def __init__(self, report: Report, *, route: str = "", tainted_params: set[str] | None = None, imports: set[str] | None = None,
-                 index: ProjectIndex | None = None, summary_params: list[str] | None = None, local_classes: set[str] | None = None) -> None:
+                 index: ProjectIndex | None = None, summary_params: list[str] | None = None, local_classes: set[str] | None = None,
+                 scope: ModuleScope | None = None, current_class: str = "") -> None:
         self.report = report
+        self.scope = scope or ModuleScope()
+        self.current_class = current_class
+        self.types: dict[str, str] = {}  # variable -> qualified class, for `x = Cls(...)` then `x.method()`
         self.route = route  # "flask" for HTML-returning routes, "api" for JSON frameworks, "" otherwise
         self.imports = imports or set()
         self.index = index
@@ -517,6 +592,12 @@ class FunctionFlow:
         learned = knowledge.active().categories_of(name, short)
         if learned and "*" in learned:
             learned = ALL_CATS
+        resolved = None if learned else self._resolve(node, name, short)
+        if resolved is not None and resolved[1]:
+            # a certain resolution (this module, an import, the object's own class) is the project's
+            # code and wins over name-based guesses below: Repo().find(k) is not str.find
+            summary = resolved[0]
+            return self._apply_summary(node, summary, recv if summary.is_method and isinstance(node.func, ast.Attribute) else None, args)
         if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars") or learned:
             cats = (SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())) | learned
             base = join(*(taint_of(a) for a in args)) if args else CLEAN
@@ -555,9 +636,10 @@ class FunctionFlow:
                     pass
             j = join(taint_of(recv), *(taint_of(a) for a in args)) if short in ("format", "join", "replace") else taint_of(recv)
             return replace(j, flags=j.flags | ({"dyn"} if short == "format" and any(not a.has_const() for a in args) else set()))
-        summary = self._resolve(node, name, short)
-        if summary is not None:
-            return self._apply_summary(node, summary, recv if summary.is_method and isinstance(node.func, ast.Attribute) else None, args)
+        if resolved is not None:
+            # resolved by name only: its sinks are reported, capped; its result is not trusted
+            summary = resolved[0]
+            self._apply_summary(node, summary, recv if summary.is_method and isinstance(node.func, ast.Attribute) else None, args, certain=False)
         # default: the result can carry anything the call was given
         parts = [taint_of(a) for a in args] + [taint_of(v) for v in kwargs.values()]
         if recv is not None:
@@ -566,29 +648,75 @@ class FunctionFlow:
         return Val(taint=j.taint, clean=j.clean if j.taint else frozenset(), flags=j.flags & {"validated"}, derived=j.derived)
 
     # ------------------------------------------------------------ inter-procedural
-    def _resolve(self, node: ast.Call, name: str, short: str) -> Summary | None:
-        if self.index is None:
+    def _class_of(self, expr: ast.AST) -> str | None:
+        """Qualified class of `Cls` or `Cls(...)` when Cls is a class this module defines or imports."""
+        if isinstance(expr, ast.Call):
+            expr = expr.func
+        name = dotted(expr)
+        if not name or name in self.env:
             return None
-        if isinstance(node.func, ast.Name):
-            if short in self.index.classes:
-                return None
-            return self.index.lookup(short, method_call=False)
-        if isinstance(node.func, ast.Attribute):
-            root = name.split(".")[0]
-            module_call = root in self.imports and root not in self.env
-            return self.index.lookup(short, method_call=not module_call)
+        head, _, rest = name.partition(".")
+        if not rest and head in self.scope.classes:
+            return f"{self.scope.module}.{head}" if self.scope.module else head
+        if head in self.scope.aliases and head not in self.env:
+            return self.scope.aliases[head] + (f".{rest}" if rest else "")
         return None
 
-    def _apply_summary(self, node: ast.Call, summ: Summary, recv: Val | None, args: list[Val]) -> Val:
+    def _resolve(self, node: ast.Call, name: str, short: str) -> tuple[Summary, bool] | None:
+        """(summary, certain). Certain: a function of this module, an imported name, a
+        module attribute, self.method in its own class, Cls.method or Cls().method.
+        Otherwise a method chosen by name alone, used only when unique and then capped."""
+        if self.index is None:
+            return None
+        sc, mod = self.scope, self.scope.module
+        if isinstance(node.func, ast.Name):
+            f = node.func.id
+            if f in self.env or f in sc.classes:
+                return None
+            if f in sc.functions:
+                hit = self.index.find(f"{mod}.{f}" if mod else f)
+            elif f in sc.aliases:
+                hit = self.index.find(sc.aliases[f])
+            else:
+                return None
+            return (hit, True) if hit else None
+        if not isinstance(node.func, ast.Attribute):
+            return None
+        recv = node.func.value
+        if isinstance(recv, ast.Name) and recv.id in self.types:
+            hit = self.index.find(f"{self.types[recv.id]}.{short}")
+            if hit:
+                return hit, True
+        if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and self.current_class:
+            hit = self.index.find(".".join(p for p in (mod, self.current_class, short) if p))
+            if hit:
+                return hit, True
+        elif isinstance(recv, (ast.Name, ast.Attribute)) and not isinstance(recv, ast.Call):
+            root = dotted(recv).split(".")[0]
+            if root in sc.aliases and root not in self.env:
+                hit = self.index.find(f"{sc.aliases[root]}{dotted(recv)[len(root):]}.{short}")
+                if hit:
+                    return hit, True
+        owner = self._class_of(recv)
+        if owner:
+            hit = self.index.find(f"{owner}.{short}")
+            if hit:
+                return hit, True
+        hit = self.index.by_name_only(short)
+        return (hit, False) if hit else None
+
+    def _apply_summary(self, node: ast.Call, summ: Summary, recv: Val | None, args: list[Val], certain: bool = True) -> Val:
         params = ([recv] if summ.is_method and recv is not None else [CLEAN] if summ.is_method else []) + args
         if summ.is_method and recv is None:
             params = [CLEAN] + args
-        for cat, pidx, line, file, msg in summ.sinks:
+        for cat, pidx, line, file, msg, uncertain in summ.sinks:
             vals = [taint_of(params[i]) for i in pidx if i < len(params)]
             if any(v.user(cat) for v in vals):
                 tainted_src = any(SRC in v.taint for v in vals) or not self.summarising
-                self._hit(cat, node, f"{summ.name}() passes request data to {msg} ({file}:{line}).", tainted=True, via=f"{file}:{line}",
-                          params=frozenset(i for i in pidx), _src=tainted_src)
+                doubt = uncertain or not certain
+                self._hit(cat, node, f"{summ.name}() passes request data to {msg} ({file}:{line})"
+                          + (" (call resolved by name only)." if doubt else "."), tainted=True, via=f"{file}:{line}",
+                          params=frozenset(i for i in pidx), _src=tainted_src, uncertain=doubt)
         flowing = [taint_of(params[i]) for i in summ.ret_params if i < len(params)]
         if summ.ret_const is not _NOCONST and not flowing and not summ.ret_user:
             return const(summ.ret_const)
@@ -719,6 +847,12 @@ class FunctionFlow:
     def _assign(self, target: ast.AST, v: Val, node: ast.AST | None = None) -> None:
         if isinstance(target, ast.Name):
             self.env[target.id] = v
+            value = getattr(node, "value", None) if isinstance(node, (ast.Assign, ast.AnnAssign)) else None
+            owner = self._class_of(value) if isinstance(value, ast.Call) else None
+            if owner:
+                self.types[target.id] = owner
+            else:
+                self.types.pop(target.id, None)
         elif isinstance(target, (ast.Tuple, ast.List)):
             elems = v.items if v.items is not None and len(v.items) == len(target.elts) else None
             for i, t in enumerate(target.elts):
@@ -949,13 +1083,14 @@ def _imports_of(tree: ast.Module) -> set[str]:
     return imports
 
 
-def _defs(tree: ast.Module) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]]:
-    out: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, bool]] = []
+def _defs(tree: ast.Module) -> list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]]:
+    """Top-level functions (class "") and methods (their class name)."""
+    out: list[tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            out.append((node, False))
+            out.append((node, ""))
         elif isinstance(node, ast.ClassDef):
-            out += [(m, True) for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            out += [(m, node.name) for m in node.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))]
     return out
 
 
@@ -969,24 +1104,27 @@ def build_index(modules: dict[str, ast.Module], rounds: int = 3) -> ProjectIndex
         fresh.classes = index.classes
         for rel, tree in modules.items():
             imports = _imports_of(tree)
-            for fn, is_method in _defs(tree):
+            scope = scope_of(rel, tree)
+            for fn, cls in _defs(tree):
                 if fn.name == "__init__":
                     continue
+                is_method = bool(cls)
                 params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
-                sinks: list[tuple[str, frozenset[int], int, str, str]] = []
+                sinks: list[tuple[str, frozenset[int], int, str, str, bool]] = []
 
                 def record(cat: str, node: ast.AST, msg: str, extra: dict[str, Any], _sinks=sinks, _rel=rel) -> None:
                     if extra.get("_src"):
                         return  # a direct source inside the helper is reported when the helper itself is analysed
                     vals = extra.get("params")
                     if vals:
-                        _sinks.append((cat, vals, getattr(node, "lineno", 0), _rel, msg.split(" (")[0]))
+                        _sinks.append((cat, vals, getattr(node, "lineno", 0), _rel, msg.split(" (")[0], bool(extra.get("uncertain"))))
 
-                flow = FunctionFlow(_SinkRecorder(record), imports=set(imports), index=index, summary_params=params)
+                flow = FunctionFlow(_SinkRecorder(record), imports=set(imports), index=index, summary_params=params, scope=scope,
+                                    current_class=cls)
                 flow.run(fn.body)
                 ret = join(*flow.returns) if flow.returns else const(None)
                 labels = ret.taint
-                summ = Summary(fn.name, is_method)
+                summ = Summary(fn.name, is_method, module=scope.module, cls=cls)
                 summ.ret_params = frozenset(int(t[1:]) for t in labels if t.startswith("p") and t[1:].isdigit())
                 summ.ret_user = SRC in labels
                 summ.ret_weak = WEAKRAND in labels
@@ -994,7 +1132,7 @@ def build_index(modules: dict[str, ast.Module], rounds: int = 3) -> ProjectIndex
                 summ.ret_constlike = ret.constant_like() and not labels
                 summ.ret_clean = ret.clean
                 summ.sinks = sinks
-                fresh.functions.setdefault(fn.name, []).append(summ)
+                fresh.add(summ)
         index = fresh
     return index
 
@@ -1009,10 +1147,13 @@ class _SinkRecorder:
         self.record(cat, node, msg, extra)
 
 
-def analyse_module(tree: ast.Module, report: Callable[[str, ast.AST, str, dict[str, Any]], None], index: ProjectIndex | None = None) -> None:
+def analyse_module(tree: ast.Module, report: Callable[[str, ast.AST, str, dict[str, Any]], None], index: ProjectIndex | None = None,
+                   rel: str = "") -> None:
     imports = _imports_of(tree)
     local_classes = {n.name for n in tree.body if isinstance(n, ast.ClassDef)}
-    FunctionFlow(report, imports=set(imports), index=index, local_classes=local_classes).run(
+    scope = scope_of(rel, tree)
+    owner = {id(m): n.name for n in tree.body if isinstance(n, ast.ClassDef) for m in n.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    FunctionFlow(report, imports=set(imports), index=index, local_classes=local_classes, scope=scope).run(
         [s for s in tree.body if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))])
     for fn in ast.walk(tree):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1026,4 +1167,5 @@ def analyse_module(tree: ast.Module, report: Callable[[str, ast.AST, str, dict[s
         elif any(ROUTE_DECORATOR.search(d) for d in decorators):
             route = "api"
             params = {a.arg for a in fn.args.args + fn.args.kwonlyargs} - {"self", "cls", "request", "db", "session", "background_tasks", "response"}
-        FunctionFlow(report, route=route, tainted_params=params, imports=set(imports), index=index, local_classes=local_classes).run(fn.body)
+        FunctionFlow(report, route=route, tainted_params=params, imports=set(imports), index=index, local_classes=local_classes,
+                     scope=scope, current_class=owner.get(id(fn), "")).run(fn.body)
