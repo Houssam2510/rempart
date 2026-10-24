@@ -42,9 +42,37 @@ Plantages : **1** (django : `code: TypeError: cannot use 'list' as a set element
 
 Scénarios d'attaque F1 à F4 : reproduits dans l'audit (section 4, exécutés sur `72eb339`) ; chacun deviendra un test en phase 1.
 
-## Suivi par identifiant
+## Phase 1 — sécurité de l'outil
+
+Chaque test a été écrit et vu en échec avant le correctif (exécuté), puis vu passer après. Tous sont dans `tests/test_audit_fixes.py`.
 
 | Id | Statut | Commit | Test | Reste incomplet |
 |---|---|---|---|---|
-| F1 – F9 | à faire (phase 1) | | | |
+| F1 | corrigé | `de111f3` | `F1LearningIsolationTest` (5 tests, dont le scénario exact de l'audit : la SQLi de B reste CRITICAL 0,90 après le scan du dépôt A aux 12 ignores) | Un **fork** partage le commit racine, donc l'identité de projet : ses `rempart:ignore` comptent pour le projet d'origine, mais plafonnés à 1,0 par règle. Les bases existantes sont migrées à la première utilisation (`History.for_root`). |
+| F2 | corrigé | `6739e6e` | `F2FailClosedTest` (6) | Un scanner qui dépasse le délai est abandonné, pas tué (thread démon) : il peut continuer à consommer du CPU jusqu'à la fin du processus. Nouveau domaine `scan` : il y a désormais 17 domaines (README à corriger en phase 3). |
+| F3 | corrigé | `b665538` | `F3AssistantCannotCloseTest` (4) | Ce commit corrige aussi une régression introduite par F1 dans `tool_triage` (`Path` importé localement). |
+| F4 | corrigé | `6744132` | `F4ConfigFromBaseTest` (5) | Les `rempart:ignore` ajoutés par la PR s'appliquent toujours (comme `nosemgrep`) ; c'est documenté dans SECURITY.md, sans signalement automatique. |
+| F5 | corrigé | `3af5eed` | `F5AgentNeverSeesSecretsTest` (4) | Le masquage repose sur les détecteurs de Rempart : un secret dans un format inconnu et non affecté à un nom évocateur passe. |
+| F6 | corrigé | `27d62f4` | `F6AgentOutputsTest` (4) | Le contrôle des preuves est statique : un code Python obfusqué (`getattr` dynamique, chaînes construites) peut l'éviter. Les fichiers compose ne sont pas protégés. Non vérifié contre une vraie injection de prompt (aucun appel API). |
+| F7 | corrigé | `2534199` | `F7LiveVerificationTest` (2) | Telegram et Mapbox gardent le jeton dans l'URL : leurs API n'acceptent rien d'autre (documenté). L'usage reste déclaratif : rien n'empêche techniquement de vérifier les clés d'un dépôt tiers. |
+| F8 | corrigé | `61c6430` | `F8McpBoundariesTest` (4) | Les images tirées d'un registre via MCP ne sont pas soumises au filtre « public seulement » (un registre interne reste joignable). `test_mcp.py` accorde explicitement sa racine temporaire. |
+| F9 | corrigé | `a4db1e4` | `F9SearchCannotHangTest` (4) | La recherche littérale reste en processus : elle est linéaire, sans risque ReDoS. `test_agent.py` passe `regex=True` pour l'appel qu'il vérifie. |
+| SELF | corrigé | `59eadba`, `b097448` | `SelfScanPinnedActionsTest` | Les 5 actions de `release.yml` sont épinglées, pas seulement celle de PyPI. AUDIT.md, FIXES.md et `bench/realworld|holdout` sont exclus du dogfooding : `DATA-TLS-DISABLED` s'y déclenchait sur de la prose (à traiter dans R4). |
 | R1 – R7 | à faire (phase 2) | | | |
+
+### Mesures après la phase 1 — exécuté sur `b097448`
+
+| Mesure | Avant (P0) | Après P1 |
+|---|---|---|
+| Tests | 164 OK | **203 OK**, 0 sautés |
+| Bench interne | 100 % / 97,8 % | 100 % / 97,8 % (`--check bench/baseline.json` : aucune régression) |
+| OWASP sans INFO / avec INFO | 99,4 / 87,7 | 99,4 / 87,7 |
+| Bench réel strict / large | 4 % / 21 % | 4 % / 21 % (inchangé : la phase 1 ne touche pas la détection) |
+| django | plantage masqué, « grade A », exit 0 | plantage visible : `SCANNER-ERROR` HIGH, score « incomplet », **exit 3** |
+| Dogfooding (`scan . --fail-on high`) | exit 0 | exit 0 (après exclusion des documents d'audit) |
+
+### Tests existants modifiés (rien n'est supprimé ni affaibli)
+
+- `tests/test_tui.py` : l'historique est recherché par `project_identity(root)` au lieu du chemin brut (F1 change le format de l'identifiant). L'assertion est inchangée.
+- `tests/test_mcp.py` : le serveur reçoit explicitement le dossier temporaire scanné comme racine (F8). Les assertions sont inchangées.
+- `tests/test_agent.py` : l'appel direct `search_code(r"^OPS", "*.py")` passe `regex=True`, puisque la recherche est littérale par défaut depuis F9. L'assertion est inchangée.
