@@ -334,6 +334,7 @@ class ProjectIndex:
         self.classes: set[str] = set()
         self.by_qual: dict[str, Summary] = {}  # "pkg.mod.func" or "pkg.mod.Class.method"
         self.bases: dict[str, list[str]] = {}  # "pkg.mod.Class" -> qualified names of its bases, in order
+        self._by_last: dict[str, list[str]] | None = None
 
     def add(self, summ: Summary) -> None:
         self.functions.setdefault(summ.name, []).append(summ)
@@ -364,7 +365,11 @@ class ProjectIndex:
             if cls in self.bases:
                 todo += self.bases[cls]
             else:  # src/ layouts: a unique suffix, as find() does
-                known = [k for k in self.bases if k.endswith("." + cls)]
+                if self._by_last is None:
+                    self._by_last = {}
+                    for k in self.bases:
+                        self._by_last.setdefault(k.rsplit(".", 1)[-1], []).append(k)
+                known = [k for k in self._by_last.get(cls.rsplit(".", 1)[-1], []) if k.endswith("." + cls)]
                 todo += self.bases[known[0]] if len(known) == 1 else []
         return None
 
