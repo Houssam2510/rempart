@@ -879,5 +879,28 @@ class R5ChainsTest(IsolatedHome):
         self.assertFalse(self.chains(quiet, "CHAIN-CI-UNTRUSTED-TO-RELEASE"))
 
 
+class R6FalsePositivesTest(IsolatedHome):
+    def findings(self, files, scanners=("code",)):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r6-{len(list(self.tmp.iterdir()))}", files)
+        return run_scan(root, [ALL_SCANNERS[n] for n in scanners], Config(), offline=True, correlate=False).findings
+
+    def rules_at(self, findings, rule, min_sev="LOW"):
+        from rempart.models import Severity
+
+        return [f for f in findings if f.rule.id == rule and f.severity >= Severity[min_sev]]
+
+    def test_str_replace_is_not_a_file_operation(self):
+        app = ("from pathlib import Path\nfrom flask import request, redirect\n\n\ndef stable():\n"
+               "    path = request.full_path\n    return redirect(path.replace('dev', 'stable', 1).lstrip('/') or '/')\n\n\n"
+               "def move():\n    p = Path('/srv') / request.args['f']\n    p.replace('/srv/archive')\n    return 'ok'\n")
+        lines = {f.line for f in self.rules_at(self.findings({"app.py": app}), "CODE-PATH-TRAVERSAL")}
+        self.assertNotIn(7, lines)  # str.replace(old, new, count)
+        self.assertIn(12, lines)  # Path.replace(target)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -800,6 +800,8 @@ class FunctionFlow:
         elif name in ("text", "sqlalchemy.text", "sa.text") and args and ("dyn" in a0.flags or a0.user("sql")):
             self._hit("sql", node, "sqlalchemy text() built by interpolation.", tainted=a0.user("sql"))
         elif name in PATH_SINKS or (short in PATH_METHODS and self.ev(node.func.value, False).user("path")
+                                    # str.replace(old, new[, count]) shares its name with Path.replace(target)
+                                    and not (short == "replace" and len(node.args) != 1)
                                     if isinstance(node.func, ast.Attribute) else False):
             target = a0 if name in PATH_SINKS else self.ev(node.func.value, False)  # type: ignore[union-attr]
             if name == "send_from_directory":
