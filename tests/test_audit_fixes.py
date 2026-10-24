@@ -901,6 +901,21 @@ class R6FalsePositivesTest(IsolatedHome):
         self.assertNotIn(7, lines)  # str.replace(old, new, count)
         self.assertIn(12, lines)  # Path.replace(target)
 
+    def test_a_constant_host_is_not_ssrf(self):
+        app = ("import requests\nfrom flask import request\n\n\ndef translate():\n    d = request.get_json()\n"
+               "    a = requests.post('https://api.translator.example/translate?from={}&to={}'.format(d['src'], d['dst']), timeout=5)\n"
+               "    url = f\"https://api.weather.example/v1/{d['city']}\"\n    b = requests.get(url, timeout=5)\n"
+               "    c = requests.get('https://%s/v1' % d['host'], timeout=5)\n"
+               "    e = requests.get('https://api.' + d['zone'] + '.example/v1', timeout=5)\n"
+               "    g = requests.get(d['url'], timeout=5)\n    return a, b, c, e, g\n")
+        lines = {f.line for f in self.rules_at(self.findings({"app.py": app}), "CODE-SSRF", "HIGH")}
+        self.assertNotIn(7, lines)   # host fixed, query from the request
+        self.assertNotIn(9, lines)   # host fixed, path from the request, through a variable
+        self.assertIn(10, lines)     # host from the request
+        self.assertIn(11, lines)     # part of the host from the request
+        self.assertIn(12, lines)     # whole URL from the request
+
+
 
 if __name__ == "__main__":
     unittest.main()

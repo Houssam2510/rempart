@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import operator
+import os
 import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable
@@ -42,6 +43,7 @@ class Val:
     keys: tuple[tuple[Any, "Val"], ...] | None = None  # dict or configparser entries
     flags: frozenset[str] = frozenset()       # "dyn" (built by interpolation), "shell", "xxe", "validated"
     derived: frozenset[str] = frozenset()
+    prefix: str = ""                          # literal text this string is known to start with ("https://api.example/")
 
     def has_const(self) -> bool:
         return self.const is not _NOCONST
@@ -55,6 +57,19 @@ class Val:
 
 
 CLEAN = Val()
+
+
+def lead(v: Val) -> str:
+    """The literal beginning of a string value: all of it for a constant, else its known prefix."""
+    return v.const if isinstance(v.const, str) else v.prefix
+
+
+_FIXED_HOST = re.compile(r"^[A-Za-z][\w+.-]*://[^/?#{}%\s@]+[/?#]")
+
+
+def fixed_host(v: Val) -> bool:
+    """The URL's scheme and host are literal text: request data can only reach its path or query."""
+    return bool(_FIXED_HOST.match(lead(v)))
 
 
 def const(v: Any) -> Val:
@@ -83,7 +98,9 @@ def join(*vals: Val) -> Val:
         keys = tuple((k, join(*kvs)) for k, kvs in merged.items())
     flags = frozenset().union(*(v.flags for v in vals)) - ({"validated"} if not all("validated" in v.flags for v in vals) else frozenset())
     flags = flags | {"constlike"} if all(v.constant_like() and not v.taint for v in vals) else flags - {"constlike"}
-    return Val(taint, clean, c, items, keys, flags, frozenset().union(*(v.derived for v in vals)))
+    leads = [lead(v) for v in vals]
+    prefix = os.path.commonprefix(leads) if all(leads) else ""
+    return Val(taint, clean, c, items, keys, flags, frozenset().union(*(v.derived for v in vals)), prefix)
 
 
 def taint_of(v: Val) -> Val:
@@ -369,7 +386,13 @@ class FunctionFlow:
                 except Exception:  # noqa: BLE001
                     pass
             j = join(*(taint_of(p) for p in parts))
-            return replace(j, const=_NOCONST, flags=j.flags | {"dyn"} if any(not p.has_const() for p in parts) else j.flags)
+            known = ""
+            for p in parts:  # the literal text before the first unknown piece
+                if not p.has_const():
+                    known += p.prefix
+                    break
+                known += str(p.const)
+            return replace(j, const=_NOCONST, prefix=known, flags=j.flags | {"dyn"} if any(not p.has_const() for p in parts) else j.flags)
         if isinstance(node, ast.FormattedValue):
             return self.ev(node.value, check)
         if isinstance(node, ast.BinOp):
@@ -382,11 +405,12 @@ class FunctionFlow:
                     pass
             if isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) and isinstance(node.left.value, str):
                 j = join(left, taint_of(right))
-                return replace(j, const=_NOCONST, flags=j.flags | {"dyn"})
+                return replace(j, const=_NOCONST, prefix=node.left.value.split("%", 1)[0], flags=j.flags | {"dyn"})
             if left.items is not None and right.items is not None and isinstance(node.op, ast.Add):
                 return Val(items=left.items + right.items)
             j = join(taint_of(left), taint_of(right))
-            return replace(j, const=_NOCONST, flags=j.flags | ({"dyn"} if not (left.has_const() and right.has_const()) else set()))
+            prefix = lead(left) + (lead(right) if left.has_const() else "") if isinstance(node.op, ast.Add) else ""
+            return replace(j, const=_NOCONST, prefix=prefix, flags=j.flags | ({"dyn"} if not (left.has_const() and right.has_const()) else set()))
         if isinstance(node, ast.UnaryOp):
             v = self.ev(node.operand, check)
             if v.has_const():
@@ -645,7 +669,8 @@ class FunctionFlow:
                 except Exception:  # noqa: BLE001
                     pass
             j = join(taint_of(recv), *(taint_of(a) for a in args)) if short in ("format", "join", "replace") else taint_of(recv)
-            return replace(j, flags=j.flags | ({"dyn"} if short == "format" and any(not a.has_const() for a in args) else set()))
+            prefix = recv.const.split("{", 1)[0] if short == "format" and isinstance(recv.const, str) else ""
+            return replace(j, prefix=prefix, flags=j.flags | ({"dyn"} if short == "format" and any(not a.has_const() for a in args) else set()))
         if resolved is not None:
             # resolved by name only: its sinks are reported, capped; its result is not trusted
             summary = resolved[0]
@@ -814,7 +839,7 @@ class FunctionFlow:
             if a0.user("redirect"):
                 self._hit("redirect", node, f"{name}() to a URL from request data.", tainted=True)
             return CLEAN  # a redirect response carries no HTML body
-        elif name in SSRF_SINKS and a0.user("ssrf"):
+        elif name in SSRF_SINKS and a0.user("ssrf") and not fixed_host(a0):  # a literal host cannot be redirected (AUDIT.md R6)
             self._hit("ssrf", node, f"{name}() fetches a URL taken from the request.", tainted=True)
         elif (name in XPATH_SINKS or short in ("xpath",)) and args:
             q = args[1] if name.startswith("elementpath") and len(args) > 1 else a0
