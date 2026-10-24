@@ -15,6 +15,7 @@ import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Iterator
 
 from rempart.engine import ScanContext
@@ -55,22 +56,29 @@ R_OSV_DOWN = rule("DEP-LOOKUP-SKIPPED", "Vulnerability lookup skipped", I, "depe
                   fix="Run again with network access to query OSV.dev.", confidence=1.0)
 
 # Popular package names used for typosquat distance checks.
-POPULAR_NPM = """react react-dom next vue svelte @sveltejs/kit express lodash axios moment dayjs chalk commander
-debug request typescript webpack vite rollup esbuild babel-core @babel/core eslint prettier jest mocha vitest
-dotenv cors body-parser jsonwebtoken bcrypt bcryptjs mongoose mongodb pg mysql mysql2 redis ioredis sequelize
-prisma @prisma/client knex uuid nanoid zod yup joi socket.io ws node-fetch cross-env rimraf glob minimist yargs
-inquirer ora colors underscore async bluebird rxjs tslib core-js classnames styled-components tailwindcss
-postcss autoprefixer sass less nodemon pm2 helmet passport multer sharp puppeteer playwright cheerio jquery
-bootstrap three d3 chart.js stripe openai @anthropic-ai/sdk aws-sdk @aws-sdk/client-s3 firebase firebase-admin
-@supabase/supabase-js graphql apollo-server @apollo/client redux @reduxjs/toolkit zustand immer date-fns
-luxon validator qs semver fs-extra mkdirp chokidar ethers web3 electron better-auth resend nodemailer
-@tanstack/react-query @tanstack/query-core tanstack""".split()
-POPULAR_PYPI = """requests numpy pandas scipy matplotlib django flask fastapi uvicorn gunicorn pydantic sqlalchemy
-psycopg2 psycopg2-binary pymongo redis celery boto3 botocore urllib3 certifi idna charset-normalizer
-setuptools wheel pip six python-dateutil pytz pyyaml jinja2 markupsafe click colorama tqdm pillow
-cryptography pyjwt bcrypt paramiko scikit-learn tensorflow torch transformers openai anthropic langchain
-httpx aiohttp beautifulsoup4 lxml selenium pytest black ruff mypy rich typer dotenv python-dotenv
-attrs packaging virtualenv docker kubernetes google-cloud-storage azure-storage-blob litellm""".split()
+# Popular packages by download ranking (src/rempart/data, refreshed by scripts/update_popular.py).
+# A name is a typosquat candidate only when it is one edit away from one of the TYPO_TARGETS most
+# popular packages of its ecosystem and is not itself in the full list (AUDIT.md R6).
+TYPO_TARGETS = 1000
+_POPULAR: dict[str, list[str]] = {}
+
+
+def popular(ecosystem: str) -> list[str]:
+    if ecosystem not in _POPULAR:
+        path = Path(__file__).resolve().parents[1] / "data" / f"popular_{ecosystem}.txt"
+        _POPULAR[ecosystem] = [l.strip() for l in path.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
+    return _POPULAR[ecosystem]
+
+
+def typosquat_of(name: str, ecosystem: str) -> str | None:
+    """The popular package `name` imitates, or None."""
+    norm = re.sub(r"[-_.]+", "-", name).lower() if ecosystem == "pypi" else name.lower()
+    names = popular(ecosystem)
+    if norm in set(names):
+        return None
+    return next((pop for pop in names[:TYPO_TARGETS] if _dl1(norm, pop)), None)
+
+
 
 
 def _dl1(a: str, b: str) -> bool:
@@ -407,11 +415,9 @@ class DependencyScanner:
                     if has_lock:
                         f.severity = Severity.LOW
                     yield f
-                if name not in POPULAR_NPM and not name.startswith("@types/"):
-                    for pop in POPULAR_NPM:
-                        if _dl1(name.lower(), pop):
-                            yield Finding(R_TYPOSQUAT, rel, ln(f'"{name}"'), f"`{name}` is one edit away from the popular package `{pop}`.", snippet=f'"{name}"')
-                            break
+                pop = None if name.startswith("@types/") else typosquat_of(name, "npm")
+                if pop:
+                    yield Finding(R_TYPOSQUAT, rel, ln(f'"{name}"'), f"`{name}` is one edit away from the popular package `{pop}`.", snippet=f'"{name}"')
         for rel in ctx.files:
             base = os.path.basename(rel)
             if parser_for(base) is not None and base.startswith(("requirements", "constraints")) or base in ("pip.conf", ".pip.conf", "pip.ini"):
@@ -423,11 +429,9 @@ class DependencyScanner:
                     req = re.match(r"^\s*([A-Za-z0-9][\w.\-]*)\s*(?:$|[<>~!=]=?|\[|;)", line) if base.startswith("requirements") else None
                     if req:
                         name = req.group(1).lower()
-                        if name not in POPULAR_PYPI:
-                            for pop in POPULAR_PYPI:
-                                if _dl1(name, pop):
-                                    yield Finding(R_TYPOSQUAT, rel, i, f"`{name}` is one edit away from the popular package `{pop}`.", snippet=line.strip())
-                                    break
+                        pop = typosquat_of(name, "pypi")
+                        if pop:
+                            yield Finding(R_TYPOSQUAT, rel, i, f"`{name}` is one edit away from the popular package `{pop}`.", snippet=line.strip())
                         if not re.search(r"===?\s*[\w.]+", line):
                             yield Finding(R_UNPINNED, rel, i, f"{req.group(1)} has no exact version pin.", snippet=line.strip(), severity=Severity.LOW)
             if base in (".npmrc", ".yarnrc", ".yarnrc.yml"):

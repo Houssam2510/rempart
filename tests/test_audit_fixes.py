@@ -970,6 +970,23 @@ def checked_but_ignored():
         self.assertEqual({n for n, kind in marked.items() if kind == "open"}, lines & set(marked))
         self.assertFalse({n for n, kind in marked.items() if kind == "guarded"} & lines)
 
+    def test_typosquat_never_flags_a_package_that_is_itself_popular(self):
+        files = {"requirements.txt": "psycopg[binary]==3.2.10\npsycopg-binary==3.2.10\npsycopg-pool==3.2.6\nreqeusts==2.31.0\n",
+                 "package.json": '{"dependencies": {"lodahs": "1.0.0", "debug": "4.3.4", "chalk": "5.3.0"}}\n'}
+        flagged = {f.message.split("`")[1] for f in self.findings(files, ("dependencies",)) if f.rule.id == "SUPPLY-TYPOSQUAT"}
+        self.assertEqual(flagged, {"reqeusts", "lodahs"})
+
+    def test_popular_lists_come_from_download_rankings_with_provenance(self):
+        from rempart.scanners import deps
+
+        root = Path(deps.__file__).resolve().parents[1] / "data"
+        for name, at_least in (("popular_pypi.txt", 10000), ("popular_npm.txt", 5000)):
+            text = (root / name).read_text()
+            self.assertIn("# source:", text)
+            self.assertIn("# retrieved:", text)
+            self.assertGreaterEqual(len([l for l in text.splitlines() if l and not l.startswith("#")]), at_least)
+
+
 
 if __name__ == "__main__":
     unittest.main()

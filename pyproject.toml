@@ -36,4 +36,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # the bench corpus, dotfiles included (.env, .mcp.json, .github/workflows/*.yml, .dockerignore)
-rempart = ["corpus/*.json", "corpus/bench/**/*", "corpus/bench/**/.*", "corpus/bench/**/.github/workflows/*"]
+rempart = ["data/*.txt", "corpus/*.json", "corpus/bench/**/*", "corpus/bench/**/.*", "corpus/bench/**/.github/workflows/*"]
