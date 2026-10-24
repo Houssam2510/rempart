@@ -5,10 +5,10 @@
 <p align="center">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-6d4aff?style=for-the-badge"></a>
   <a href="pyproject.toml"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"></a>
-  <a href="tests"><img alt="160 tests" src="https://img.shields.io/badge/tests-160%20passing-12805c?style=for-the-badge"></a>
-  <a href="docs/RULES.md"><img alt="316 rules" src="https://img.shields.io/badge/rules-316-2a78d6?style=for-the-badge"></a>
+  <a href="tests"><img alt="241 tests" src="https://img.shields.io/badge/tests-241%20passing-12805c?style=for-the-badge"></a>
+  <a href="#-measured-not-claimed"><img alt="319 rules, 233 for a repository scan" src="https://img.shields.io/badge/rules-319%20(233%20repo)-2a78d6?style=for-the-badge"></a>
   <a href="docs/THREAT_CATALOG.md"><img alt="OWASP 2025" src="https://img.shields.io/badge/OWASP%20Top%2010-2025-14161b?style=for-the-badge"></a>
-  <a href="#-measured-not-claimed"><img alt="OWASP Benchmark 99.4" src="https://img.shields.io/badge/OWASP%20Benchmark-99.4-12805c?style=for-the-badge"></a>
+  <a href="#-measured-not-claimed"><img alt="OWASP Benchmark 99.4 (87.7 with INFO)" src="https://img.shields.io/badge/OWASP%20Benchmark-99.4%20%2F%2087.7%20with%20INFO-12805c?style=for-the-badge"></a>
   <a href="#-plug-it-into-your-ai-coding-assistant-mcp"><img alt="MCP server" src="https://img.shields.io/badge/MCP-server-e8590c?style=for-the-badge"></a>
 </p>
 
@@ -31,7 +31,7 @@
 
 <p align="center">
   <img src="docs/assets/demo-scan.png" alt="Real output of rempart scan on the intentionally vulnerable demo app" width="92%">
-  <br><sub>Real output on <code>examples/vulnerable-app</code>: six attack paths, five of them proven through the infrastructure that connects their pieces.</sub>
+  <br><sub>Real output on <code>examples/vulnerable-app</code> (redrawn by <code>scripts/render_demo.py</code>): six attack paths, <b>4 linked</b> through the infrastructure that connects their pieces (CRITICAL) and <b>2 correlated</b>, found in the same project with no link between them (at most HIGH).</sub>
 </p>
 
 ## ✨ Why Rempart
@@ -118,7 +118,7 @@ Verdicts, fixes and knowledge made in the interface teach the CLI too: it is the
 ```mermaid
 flowchart LR
     IN["WHAT IT READS<br/>repository + git history · container image<br/>live AWS · GCP · Azure · Kubernetes · website"]
-    SC["13 SCANNERS<br/>316 rules · 16 domains"]
+    SC["10 REPOSITORY SCANNERS<br/>+ image, cloud and web commands<br/>319 rules · 17 domains"]
     IQ["INTELLIGENCE<br/>inter-procedural data flow · reachability<br/>live verification · resource graph<br/>AI agent · learning per context"]
     OUT["OUTPUTS<br/>terminal · HTML · SARIF<br/>JSON · Markdown · MCP"]
     IN --> SC --> IQ --> OUT
@@ -207,14 +207,14 @@ It is tested against the real Anthropic Python SDK through a mocked HTTP transpo
 
 The assistant can only scan inside the `--root` directories (default: the server's working directory, or `REMPART_MCP_ROOTS`), and `rempart_web_audit` only reaches **public** addresses: the host is resolved once, every address must be public (no private, loopback, link-local, cloud-metadata or reserved range), and the connection goes to that checked address, so a changing DNS answer cannot redirect it; redirects are checked at every hop.
 
-Tools: `rempart_scan` · `rempart_finding` · `rempart_triage` · `rempart_web_audit` · `rempart_image_scan` · `rempart_rules`. Your assistant can scan, read details and record verdicts while it writes code.
+Tools: `rempart_scan` · `rempart_finding` · `rempart_triage` · `rempart_web_audit` · `rempart_image_scan` · `rempart_rules`. Your assistant can scan, read details and record verdicts while it writes code. `rempart_image_scan` reads a local archive only inside the roots, but it pulls a **registry** image from any registry the machine can reach, internal ones included: the public-address check applies to the web audit only.
 
 What an assistant records is **evidence, not a decision**: `rempart_triage` stores its verdict with the source `ai_assistant`, at weight 0.5, in the scanned project only. It never closes a finding and never changes the severity that `--fail-on` reads: only verdicts from `rempart triage` (a person) do. A reason it gives (`because`) is stored as a proposal that a person accepts with `rempart learn --accept-proposals`.
 
 ## 🗺️ Coverage
 
 <details open>
-<summary><b>16 domains, mapped to current frameworks</b></summary>
+<summary><b>17 domains, mapped to current frameworks</b></summary>
 
 | Domain | Highlights | Frameworks |
 |---|---|---|
@@ -230,6 +230,8 @@ What an assistant records is **evidence, not a decision**: `rempart_triage` stor
 | 🧠 **AI & agents** | Unpinned MCP servers, secrets in MCP configs, invisible Unicode in assistant instruction files, LLM output to sinks, shell-executing tools | OWASP LLM 2025, Agentic 2026 |
 | 🧹 **Quality & perf** | Fail-open auth, swallowed exceptions, N+1 queries, missing timeouts, unbounded queries, blocking I/O | A10:2025 |
 | 🌐 **Web (passive)** | HTTPS, HSTS, CSP, framing, cookies, CORS, banners, legacy TLS, certificate expiry, `security.txt`, cold/warm TTFB | A02/A04/A07:2025 |
+
+**Where the 319 rules apply** (`rempart rules`): **233** run in a repository scan (`rempart scan`), 52 of them for secrets, 39 for code, 31 for Terraform, 18 for data stores, 17 each for CI/CD and Kubernetes, 12 for containers, 10 for AI agents, 19 for quality and performance, 9 attack paths, 6 for the supply chain and 3 for dependencies (`DEP-VULNERABLE` carries every CVE). **68** run only against a live account or site (AWS 29, Google Cloud and Azure 22, web 17), **11** only on container images, and **7** are technical notices (`*-CHECK-SKIPPED`, `CTX-*`, `SCANNER-ERROR`, `REMPART-CONFIG-CHANGED`). The 17th domain, `scan`, only reports an incomplete scan.
 
 The full research is in **[docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md)**: every threat class, the 2025-2026 incidents behind it, and an honest list of what static analysis cannot see. All rules: [docs/RULES.md](docs/RULES.md).
 
@@ -276,22 +278,45 @@ The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contain
 
 ## 📏 Measured, not claimed
 
+### Precision on code it had never seen
+
+The number that matters most, and the worst one. Five public repositories (Flask, Django, Next.js, Terraform, Kubernetes + GitHub Actions), pinned to a commit, scanned with `rempart scan --offline`. Each critical/high finding of the top 10 by risk is labelled by reading the code: **strict** = real issues / labelled, **large** also counts debatable ones. Reproduce: `python bench/realworld.py --stress -v`.
+
+| Repository | Before the October 2026 fixes (never seen) | After the fixes (now a tuning set) |
+|---|---|---|
+| miguelgrinberg/microblog | 0 % / 50 % (2 findings) | no critical/high finding |
+| django/djangoproject.com | 0 % / 20 % (10) | 0 % / 0 % (1) |
+| vercel/commerce | no critical/high finding | no critical/high finding |
+| terraform-aws-modules/terraform-aws-eks | 0 % / 0 % (3) | no critical/high finding |
+| GoogleCloudPlatform/microservices-demo | 11 % / 22 % (9) | 57 % / 86 % (7) |
+| **Total, strict / large** | **4 % / 21 %** (24 findings: 1 real, 19 wrong, 4 debatable) | **50 % / 75 %** (8 findings: 4 real, 2 wrong, 2 debatable) |
+| django/django (time and crashes only) | crashed (`TypeError`), reported as a clean scan | no crash, 109 s |
+
+Read the right-hand column with care: the fixes were written while looking at these five repositories' false positives (general rules, but chosen by looking), so they are **no longer unseen code**. Five other repositories are held out in [`bench/holdout`](bench/holdout) and will be scanned once, without tuning, to give the next honest number. Nothing here measures how many real issues are missed. A nightly job ([realworld-nightly.yml](.github/workflows/realworld-nightly.yml)) fails on any drop against [`bench/realworld/baseline.json`](bench/realworld/baseline.json).
+
+### Other measurements
+
 | Target | Result |
 |---|---|
-| [OWASP Benchmark for Python](https://github.com/OWASP-Benchmark/BenchmarkPython) (1,230 labelled test cases, 14 categories) | **99.4 / 100** (Youden index). True-positive rate 100 % in every category, false-positive rate 0 % in 12 of 14. Reproduce: `python bench/owasp_python.py <clone>` |
-| 10 real private repositories, every critical/high finding labelled by hand | Precision **8 % → 80 %** strict (100 % counting the one debatable case) while keeping **all 4** real issues |
-| [cspm-lite](https://github.com/Houssam2510/cspm-lite) vulnerable AWS lab | **9 / 9** planted misconfigurations + 2 attack paths |
+| [OWASP Benchmark for Python](https://github.com/OWASP-Benchmark/BenchmarkPython) (1,230 labelled test cases, 14 categories) | **99.4 / 100** (Youden index) counting alerts (LOW and above); **87.7** if INFO notes count too (XML parsers whose safety depends on configuration are reported as INFO on the XXE traps). True-positive rate 100 % in every category. The benchmark is synthetic, one Flask handler per case: the table above shows that this score does not carry over to real code. Reproduce: `python bench/owasp_python.py <clone>` (prints both). |
+| [cspm-lite](https://github.com/Houssam2510/cspm-lite) vulnerable AWS lab, 9 planted misconfigurations | **Statically** on its Terraform (`rempart scan lab/`): **5 / 9** (Block Public Access off, `Principal "*"`, AdministratorAccess, `Action "*"`, ports 22 and 3306), plus 2 attack paths (1 linked, 1 correlated). Missed statically: S3 encryption, versioning, the TLS-only condition, VPC flow logs. **Live** against the deployed lab (`rempart cloud aws`): 9 / 9 was observed when the checks were written; **not re-verified** since (no AWS account in the October 2026 audit). |
 | `traefik:v2.10.4` (live pull) | Go modules and toolchain read from the binary: `golang.org/x/net@v0.11.0` HTTP/2 Rapid Reset (KEV) found |
 | `rockylinux:9-minimal` (live pull) | RPM database parsed, advisories matched by source package |
-| AWS / GCP / Azure checks | 28 validated against the AWS service models (botocore Stubber); GCP and Azure against recorded CLI output |
-| `rempart bench`: 22 bundled cases, every domain that reads files, 90 labelled issues + 73 traps | Precision **100 %**, recall **97.8 %**. The 2 misses are known gaps (Terraform variables, JS across modules). This corpus is a **regression gate**, not a held-out set: building it exposed 11 defects, all fixed since, so it shows that they stay fixed, not how Rempart does on code it has never seen. CI fails on any drop in any domain. |
-| Rempart on itself | 160 tests; CI fails on any high finding and on any bench regression |
+| AWS / GCP / Azure checks | 28 validated against the AWS service models (botocore Stubber); GCP and Azure against recorded CLI output. None against a real account in CI. |
+| `rempart bench`: 22 bundled cases, every domain that reads files, 92 labelled issues + 73 traps | Precision **100 %**, recall **98.9 %**. The miss is a known gap (JS across modules). This corpus is a **regression gate**, not a held-out set: building it exposed 11 defects, all fixed since, so it shows that they stay fixed, not how Rempart does on code it has never seen. CI fails on any drop in any domain. |
+| Rempart on itself | 241 tests; CI fails on any high finding and on any bench regression |
+
+An earlier version of this page claimed "precision 8 % → 80 % on 10 private repositories". Those repositories cannot be published, so the claim cannot be checked, and the public measurement above contradicts it: it has been removed.
 
 ## ⚠️ Limits, stated plainly
 
+- **Precision on unseen real code is low.** 4 % strict on the five repositories above before tuning; the tuned 50 % is not yet confirmed on held-out code. Expect to triage, and teach it with `--because`.
 - **JS/TS data flow** follows variables and functions **within a file**; Python follows functions across the whole repository. Values that cross JS modules are reached by the AI agent, not the static layer.
-- **Terraform values** are read literally: `cidr_blocks = [var.admin_cidr]` is not resolved to the variable's default yet.
-- **Links between code and cloud** are proven when the repository says what runs where (an image built here referenced by a workload, a Terraform reference). Live AWS/GCP/Azure findings are not yet tied to repository resources, so those chains stay co-occurrences.
+- **Python call resolution** links a call to the project's function only when the target is certain (same module, an import, the object's own class or its project base classes). A call matched by method name alone is capped at MEDIUM and says so. Dynamic imports (`importlib`, `__import__`) are not followed. A project function named like a known escaper (`escape_html`…) is trusted by its name.
+- **Terraform values** are resolved in simple cases only: variable defaults (including `optional()` defaults), `terraform.tfvars` / `*.auto.tfvars` of the same directory, literal locals, single-element `dynamic` blocks. Values passed into a child module and multi-element `for_each` are not; a check that reads an unresolved value is capped at MEDIUM and says "Value not resolved".
+- **File kinds** (application, development, example, test, vendored, docs) are guessed from paths and layout ([filekind.py](src/rempart/filekind.py) lists the rules). A development file with an unusual name is treated as shipped code.
+- **Attack paths**: only a **linked** chain (the infrastructure connects its pieces) is CRITICAL. A **correlated** chain only means both pieces are in the project and is at most HIGH. Neither is a proof of exploitation.
+- **Links between code and cloud** are proven when the repository says what runs where (an image built here referenced by a workload, a Terraform reference). Live AWS/GCP/Azure findings are not yet tied to repository resources, so those chains stay correlated.
 - **Logic flaws** (IDOR, business-flow abuse) are a review queue, not verdicts.
 - **Images**: RPM databases in the older BerkeleyDB format (RHEL 7/8) and Red Hat's own advisory feed are not covered.
 - **The web mode is passive.** It is not a penetration test, and proof tests are written, never run.
