@@ -987,6 +987,55 @@ def checked_but_ignored():
             self.assertGreaterEqual(len([l for l in text.splitlines() if l and not l.startswith("#")]), at_least)
 
 
+    def test_environment_values_are_not_user_input_and_unknown_sources_are_not_critical(self):
+        go = """package main
+
+import (
+\t"database/sql"
+\t"net/http"
+\t"os"
+)
+
+var db *sql.DB
+
+func load() {
+\ttable := os.Getenv("TABLE_NAME")
+\tdb.Query("SELECT id, name FROM " + table)  // env
+}
+
+func user(w http.ResponseWriter, r *http.Request) {
+\tid := r.URL.Query().Get("id")
+\tdb.Query("SELECT * FROM users WHERE id = " + id)  // request
+}
+
+func helper(name string) {
+\tdb.Query("SELECT * FROM users WHERE name = " + name)  // unknown
+}
+"""
+        java = """class A {
+  void run(java.sql.Statement st) throws Exception {
+    String t = System.getenv("TABLE");
+    st.executeQuery("SELECT * FROM " + t);  // env
+  }
+}
+"""
+        js = "const table = process.env.TABLE;\nasync function load(db) {\n  return db.query(\"SELECT * FROM \" + table);  // env\n}\n"
+        found = self.findings({"main.go": go, "A.java": java, "load.js": js})
+        sqli = {(f.path, f.line): f.severity.name for f in found if f.rule.id == "CODE-SQL-INJECTION"}
+        marks = {}
+        for path, text in (("main.go", go), ("A.java", java), ("load.js", js)):
+            for n, line in enumerate(text.splitlines(), 1):
+                if "//" in line and line.rstrip().endswith(("env", "request", "unknown")):
+                    marks[(path, n)] = line.rstrip().rsplit(" ", 1)[1]
+        for where, kind in marks.items():
+            if kind == "env":
+                self.assertNotIn(where, sqli, where)
+            elif kind == "request":
+                self.assertEqual(sqli.get(where), "CRITICAL", where)
+            else:
+                self.assertEqual(sqli.get(where), "MEDIUM", where)
+
+
 
 if __name__ == "__main__":
     unittest.main()

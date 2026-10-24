@@ -537,6 +537,42 @@ def js_tracked_names(text: str) -> tuple[dict[str, int], dict[str, int]]:
     return tainted, dynamic
 
 
+# Where a concatenated value comes from, for the line-level SQL and command rules of languages
+# without a data-flow engine (AUDIT.md R6). Request data keeps the finding CRITICAL; the process
+# environment or configuration is not user input; anything else is a review item, not a verdict.
+_REQUEST_SRC = re.compile(
+    r"\br\.(?:URL\.Query|FormValue|PostFormValue|Form\b|PostForm\b|Header\.Get|Body\b|PathValue)|mux\.Vars\(|\bc\.(?:Query|Param|PostForm|GetHeader)\("
+    r"|\.getParameter(?:Values)?\(|\.getHeader\(|\.getQueryString\(|@RequestParam|@PathVariable|@RequestBody"
+    r"|\bRequest\.(?:Query|Form|Headers|Cookies|Body)|\bRequest\[|\$_(?:GET|POST|REQUEST|COOKIE|FILES|SERVER\[['\"](?:HTTP_|QUERY_|REQUEST_URI))"
+    r"|\bparams\[|\brequest\.(?:params|query|body)")
+_ENV_SRC = re.compile(r"os\.Getenv|os\.LookupEnv|System\.getenv|System\.getProperty|process\.env|Environment\.GetEnvironmentVariable"
+                      r"|\bgetenv\(|\$_ENV\[|\bENV\[|viper\.Get|\bflag\.(?:String|Int)\(|ConfigurationManager|@Value\(")
+_STRINGS = re.compile(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|`[^`]*`')
+
+
+def concat_origin(line: str, before: list[str], js_names: dict[str, int] | None = None, lineno: int = 0) -> str:
+    """'request', 'env' or 'unknown' for the values concatenated on `line`, looking at the
+    line itself and at the last assignment of each identifier in the lines `before` it."""
+    if _REQUEST_SRC.search(line) or _JS_SOURCE.search(line):
+        return "request"
+    code = _STRINGS.sub('""', line)
+    idents = {m for m in re.findall(r"\$?[A-Za-z_][\w$]*", code)}
+    origins = []
+    for name in idents:
+        if js_names and name in js_names and taint_reaches(name, js_names[name], lineno):
+            return "request"
+        assign = re.compile(rf"(?:^|[\s(,;{{])(?:(?:var|let|const|String|string|final|val|auto)\s+)?{re.escape(name)}\s*(?::=|=)(?!=)\s*(.+)")
+        rhs = next((m.group(1) for prev in reversed(before) if (m := assign.search(prev))), None)
+        if rhs is None:
+            continue
+        origins.append("request" if _REQUEST_SRC.search(rhs) or _JS_SOURCE.search(rhs) else "env" if _ENV_SRC.search(rhs) else "unknown")
+    if "request" in origins:
+        return "request"
+    if origins and all(o == "env" for o in origins):
+        return "env"
+    return "unknown"
+
+
 class CodeScanner:
     name = "code"
 
@@ -605,6 +641,16 @@ class CodeScanner:
                         continue
                     yield Finding(r.rule, rel, i, "Shell command built from request data.", snippet=line.strip()[:240])
                     continue
+                if r.rule in (R_SQLI, R_CMD_INJ) and not lower.endswith(PY):
+                    if js_names is None and lower.endswith(JS):
+                        js_names = js_tracked_names(text)[0]
+                    origin = concat_origin(line, all_lines[:i - 1], js_names, i)
+                    if origin == "env":
+                        continue  # built from the process environment or configuration, not from a user
+                    if origin == "unknown":
+                        yield Finding(r.rule, rel, i, r.message + " Request data was not traced to it: review where the value comes from.",
+                                      snippet=line.strip()[:240], severity=Severity.MEDIUM, confidence=0.5)
+                        continue
                 yield Finding(r.rule, rel, i, r.message, snippet=line.strip()[:240])
 
     def _dom_html(self, rel: str, text: str) -> Iterator[Finding]:
