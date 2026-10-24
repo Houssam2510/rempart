@@ -90,6 +90,15 @@ def luhn(digits: str) -> bool:
     return total % 10 == 0
 
 
+# Database connectors that open their own encrypted (mTLS) channel: the driver-level sslmode is
+# off by design behind them (AUDIT.md R6). Cloud SQL / AlloyDB connectors and auth proxies.
+_ENCRYPTING_CONNECTOR = re.compile(
+    r"cloud\.google\.com/go/(?:alloydbconn|cloudsqlconn)|google\.cloud\.(?:sql\.connector|alloydb\.connector)|@google-cloud/(?:cloud-sql|alloydb)-connector"
+    r"|com\.google\.cloud\.sql|alloydb-auth-proxy|cloud-sql-proxy|cloud_sql_proxy")
+# a Unix socket or the loopback interface: nothing to encrypt on the wire
+_LOCAL_TARGET = re.compile(r"(?i)host=/|@/|unix_socket|\.sock\b|@(?:localhost|127\.0\.0\.1|\[::1\])[:/]|host=(?:localhost|127\.0\.0\.1)\b")
+
+
 class DataScanner:
     name = "data"
 
@@ -125,6 +134,7 @@ class DataScanner:
             yield from self.supabase_rls(ctx, supabase_sql)
 
     def connection_strings(self, ctx: ScanContext, rel: str) -> Iterator[Finding]:
+        connector = bool(_ENCRYPTING_CONNECTOR.search(ctx.text(rel) or ""))
         for i, line in enumerate(ctx.lines(rel), 1):
             if len(line) > 2000 or _PATTERN_LINE.search(line):
                 continue
@@ -144,7 +154,13 @@ class DataScanner:
                     f.severity, f.confidence = sev, 0.6
                 yield f
             if re.search(r"(?i)sslmode=disable|[?&](?:ssl|tls|useSSL)=false\b|sslmode\s*[:=]\s*['\"]disable['\"]", line):
-                yield Finding(R_NO_TLS, rel, i, "Database connection explicitly without TLS.", snippet=_mask(line))
+                why = ("the file uses a connector that encrypts the connection itself" if connector
+                       else "the connection goes to a local socket or this machine" if _LOCAL_TARGET.search(line) else "")
+                if why:
+                    yield Finding(R_NO_TLS, rel, i, f"Database connection without TLS, but {why}.", snippet=_mask(line),
+                                  severity=Severity.LOW, confidence=0.4)
+                else:
+                    yield Finding(R_NO_TLS, rel, i, "Database connection explicitly without TLS.", snippet=_mask(line))
             elif re.search(r"\bssl\s*:\s*false\b", _STR.sub("''", line)) and re.search(r"(?i)db|database|pg|postgres|mysql|mongo|redis|knex|sequelize|typeorm|connection|pool", line):
                 yield Finding(R_NO_TLS, rel, i, "Database client configured with ssl: false.", snippet=_mask(line))
             if re.search(r"(?i)tlsAllowInvalid(?:Certificates|Hostnames)\s*[=:]\s*true|tlsInsecure\s*[=:]\s*true|sslValidate\s*[=:]\s*false", line):

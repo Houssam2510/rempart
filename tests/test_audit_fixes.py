@@ -1062,6 +1062,17 @@ spec:
         self.assertEqual([f.message.split(" env ")[1].split(" ")[0] for f in found], ["STRIPE_SECRET"])
 
 
+    def test_tls_off_behind_an_encrypting_connector_or_a_local_socket_is_low(self):
+        alloy = ('package main\n\nimport (\n\t"cloud.google.com/go/alloydbconn"\n\t"fmt"\n)\n\nfunc dsn(p string) string {\n'
+                 '\t_ = alloydbconn.NewDialer\n\treturn fmt.Sprintf("user=app password=%s dbname=app sslmode=disable", p)\n}\n')
+        sqlproxy = "from google.cloud.sql.connector import Connector\nDSN = 'postgresql://app@/db?host=/cloudsql/p:r:i&sslmode=disable'\n"
+        local = "DSN = 'postgresql://app@localhost:5432/db?sslmode=disable'\n"
+        remote = "DSN = 'postgresql://app@db.internal.example:5432/db?sslmode=disable'\n"
+        found = self.findings({"alloy.go": alloy, "proxy.py": sqlproxy, "local_db.py": local, "remote_db.py": remote}, ("data",))
+        sev = {f.path: f.severity.name for f in found if f.rule.id == "DATA-TLS-DISABLED"}
+        self.assertEqual(sev, {"alloy.go": "LOW", "proxy.py": "LOW", "local_db.py": "LOW", "remote_db.py": "HIGH"})
+
+
 
 if __name__ == "__main__":
     unittest.main()
