@@ -93,10 +93,11 @@ def tool_triage(args: dict[str, Any]) -> str:
     f = _find(str(args["id"]))
     hist = History()
     try:
+        project = hist.for_root(Path(_LAST["result"].root))
         if not _LAST.get("recorded"):  # triage needs the finding in history
-            hist.record(_LAST["result"].root, _LAST["result"])
+            hist.record(project, _LAST["result"])
             _LAST["recorded"] = True
-        hist.triage(_LAST["result"].root, f.fingerprint, str(args["verdict"]), str(args.get("note") or ""))
+        hist.triage(project, f.fingerprint, str(args["verdict"]), str(args.get("note") or ""))
     finally:
         hist.close()
     out = f"recorded {args['verdict']} for {f.rule.id} at {f.path}:{f.line}"

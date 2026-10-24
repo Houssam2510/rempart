@@ -8,6 +8,12 @@ Every scan is recorded per project. Evidence about findings comes from four sour
                scanned with the same rules and options: it was fixed
     inline     a finding silenced with `rempart:ignore` in the code    weight 0.5
 
+Evidence is **per project**: a project is identified by the root commit of its git
+history (two clones learn together), else by its canonical path. One repository can
+never change how another is judged. The only evidence that crosses projects is a human
+verdict explicitly marked global (`rempart triage ID --fp --global`). Inline ignores
+weigh at most INLINE_CAP per rule and project, however many there are.
+
 The evidence feeds a Beta-Bernoulli precision estimate per rule, refined per rule ×
 kind of file (code, scripts, tests, infra…):
 
@@ -65,7 +71,8 @@ CREATE TABLE IF NOT EXISTS verdicts (
 _MIGRATIONS = {
     "scans": {"version": "TEXT", "profile": "TEXT"},
     "findings": {"base_severity": "TEXT", "base_confidence": "REAL"},
-    "verdicts": {"source": "TEXT NOT NULL DEFAULT 'human'", "path": "TEXT", "rule_version": "INTEGER NOT NULL DEFAULT 1"},
+    "verdicts": {"source": "TEXT NOT NULL DEFAULT 'human'", "path": "TEXT", "rule_version": "INTEGER NOT NULL DEFAULT 1",
+                 "scope": "TEXT NOT NULL DEFAULT 'project'"},
 }
 
 # An AI verdict is evidence, not a decision: it counts half in calibration and can
@@ -76,6 +83,9 @@ SOURCE_WEIGHT = {"human": 1.0, "ai": AI_WEIGHT, "implicit": 0.5, "inline": 0.5}
 # Who may overwrite whom: a human verdict always wins; the agent overrides automatic signals.
 SOURCE_RANK = {"human": 3, "ai": 2, "implicit": 1, "inline": 1}
 HALF_LIFE_DAYS = 365.0
+# Total weight that `rempart:ignore` lines can carry for one rule in one project: they can
+# nudge the estimate, never decide it, so a file full of ignores cannot sink a rule.
+INLINE_CAP = 1.0
 OLD_VERSION_WEIGHT = 0.25
 REGRESSION_NOTE = "regression: fixed in an earlier scan, back now"
 
@@ -111,6 +121,26 @@ def path_context(path: str) -> str:
     return "code"
 
 
+def project_identity(root: Path) -> str:
+    """Stable identity of a project: the root commit of its git history plus the
+    directory inside the repository (a monorepo's services stay apart), else the
+    canonical path. Two clones of a repository share what was learned."""
+    import subprocess
+
+    root = Path(root).resolve()
+    try:
+        git = ["git", "-C", str(root)]
+        roots = subprocess.run(git + ["rev-list", "--max-parents=0", "HEAD"], capture_output=True, text=True, timeout=30)
+        top = subprocess.run(git + ["rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=30)
+        if roots.returncode == 0 and roots.stdout.strip() and top.returncode == 0:
+            first = sorted(roots.stdout.split())[0]
+            rel = root.relative_to(Path(top.stdout.strip()).resolve()).as_posix()
+            return f"git:{first}" + ("" if rel == "." else f":{rel}")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    return f"path:{root}"
+
+
 @dataclass(frozen=True)
 class Evidence:
     rule_id: str
@@ -119,6 +149,8 @@ class Evidence:
     ts: float
     path: str
     rule_version: int = 1
+    project: str = ""
+    scope: str = "project"  # "global": a human verdict meant for every project
 
 
 class Calibrator:
@@ -130,8 +162,13 @@ class Calibrator:
         self.rules = rules or {}
         self.by_rule: dict[str, RuleStats] = {}
         self.by_context: dict[tuple[str, str], RuleStats] = {}
+        inline_used: dict[tuple[str, str], float] = {}
         for e in evidence:
             w = self.weight(e)
+            if e.source == "inline":
+                key = (e.project, e.rule_id)
+                w = min(w, max(0.0, INLINE_CAP - inline_used.get(key, 0.0)))
+                inline_used[key] = inline_used.get(key, 0.0) + w
             if w <= 0:
                 continue
             for st in (self.by_rule.setdefault(e.rule_id, RuleStats(e.rule_id, 0, 0, 0)),
@@ -188,32 +225,54 @@ class History:
     def close(self) -> None:
         self.db.close()
 
+    def for_root(self, root: Path) -> str:
+        """The project identity of `root`, adopting what older versions recorded
+        under its plain path."""
+        project = project_identity(root)
+        legacy = str(Path(root).resolve())
+        if legacy != project and self.db.execute("SELECT 1 FROM scans WHERE project = ? LIMIT 1", (legacy,)).fetchone():
+            self.db.execute("UPDATE scans SET project = ? WHERE project = ?", (project, legacy))
+            self.db.execute("UPDATE OR IGNORE verdicts SET project = ? WHERE project = ?", (project, legacy))
+            self.db.commit()
+        return project
+
     # ------------------------------------------------------------ evidence
-    def evidence(self, before: float | None = None) -> list[Evidence]:
+    def evidence(self, project: str | None = None, before: float | None = None) -> list[Evidence]:
+        """What may calibrate `project`: its own evidence and human verdicts explicitly
+        marked global. With no project, every piece of evidence (for display only)."""
+        where, params = [], []
+        if project is not None:
+            where.append("(v.project = ? OR (v.scope = 'global' AND v.source = 'human'))")
+            params.append(project)
+        if before is not None:
+            where.append("v.ts < ?")
+            params.append(before)
         rows = self.db.execute(
             "SELECT v.rule_id, v.verdict, v.source, v.ts, COALESCE(v.path,"
-            " (SELECT f.path FROM findings f WHERE f.fingerprint = v.fingerprint ORDER BY f.scan_id DESC LIMIT 1), ''), v.rule_version"
-            " FROM verdicts v" + (" WHERE v.ts < ?" if before is not None else ""),
-            (before,) if before is not None else (),
+            " (SELECT f.path FROM findings f WHERE f.fingerprint = v.fingerprint ORDER BY f.scan_id DESC LIMIT 1), ''), v.rule_version,"
+            " v.project, v.scope FROM verdicts v" + (" WHERE " + " AND ".join(where) if where else ""),
+            params,
         ).fetchall()
-        return [Evidence(r[0], r[1], r[2] or "human", r[3], r[4] or "", r[5] or 1) for r in rows]
+        return [Evidence(r[0], r[1], r[2] or "human", r[3], r[4] or "", r[5] or 1, r[6] or "", r[7] or "project") for r in rows]
 
-    def calibrator(self, now: float | None = None, before: float | None = None) -> Calibrator:
+    def calibrator(self, project: str | None = None, now: float | None = None, before: float | None = None) -> Calibrator:
         from rempart.registry import load_all_rules
 
-        return Calibrator(self.evidence(before), load_all_rules(), now=now)
+        return Calibrator(self.evidence(project, before), load_all_rules(), now=now)
 
-    def rule_stats(self) -> dict[str, RuleStats]:
-        return self.calibrator().by_rule
+    def rule_stats(self, project: str | None = None) -> dict[str, RuleStats]:
+        return self.calibrator(project).by_rule
 
-    def context_stats(self) -> dict[tuple[str, str], RuleStats]:
+    def context_stats(self, project: str | None = None) -> dict[tuple[str, str], RuleStats]:
         """The same counts split by where the finding was: a rule can be precise in
         application code and noisy in scripts or infrastructure."""
-        return self.calibrator().by_context
+        return self.calibrator(project).by_context
 
-    def source_counts(self) -> dict[str, dict[str, int]]:
+    def source_counts(self, project: str | None = None) -> dict[str, dict[str, int]]:
         out: dict[str, dict[str, int]] = {}
-        for rule_id, source, n in self.db.execute("SELECT rule_id, source, COUNT(*) FROM verdicts GROUP BY rule_id, source"):
+        query = "SELECT rule_id, source, COUNT(*) FROM verdicts" + (" WHERE project = ? OR (scope = 'global' AND source = 'human')" if project else "") \
+            + " GROUP BY rule_id, source"
+        for rule_id, source, n in self.db.execute(query, (project,) if project else ()):
             out.setdefault(rule_id, {})[source] = n
         return out
 
@@ -222,7 +281,7 @@ class History:
         """Suppress triaged noise, recalibrate confidence, flag regressions. Returns (kept, suppressed)."""
         closed = self._closed(project)
         fixed = self._fixed(project)
-        cal = self.calibrator()
+        cal = self.calibrator(project)
         kept: list[Finding] = []
         for f in findings:
             if f.fingerprint in closed:
@@ -238,7 +297,9 @@ class History:
         kept.sort(key=lambda f: (-f.risk, f.path, f.line))
         return kept, len(findings) - len(kept)
 
-    def triage(self, project: str, fingerprint: str, verdict: str, note: str = "", source: str = "human") -> str:
+    def triage(self, project: str, fingerprint: str, verdict: str, note: str = "", source: str = "human", scope: str = "project") -> str:
+        if scope == "global" and source != "human":
+            raise ValueError("only a person can record a verdict for every project")
         row = self.db.execute(
             "SELECT f.rule_id, f.fingerprint, f.path FROM findings f JOIN scans s ON s.id = f.scan_id"
             " WHERE s.project = ? AND f.fingerprint LIKE ? ORDER BY s.id DESC LIMIT 1",
@@ -248,7 +309,7 @@ class History:
         ).fetchone()
         if row is None:
             raise KeyError(f"unknown fingerprint {fingerprint} for {project}; run a scan first")
-        self._put_verdict(project, row[1], row[0], verdict, note, source, row[2])
+        self._put_verdict(project, row[1], row[0], verdict, note, source, row[2], scope)
         self.db.commit()
         return row[0]
 
@@ -258,18 +319,19 @@ class History:
             " WHERE s.project = ? AND f.fingerprint LIKE ? ORDER BY s.id DESC LIMIT 1", (project, fingerprint + "%")).fetchone()
         return {"rule_id": row[0], "fingerprint": row[1], "path": row[2], "line": row[3]} if row else None
 
-    def _put_verdict(self, project: str, fingerprint: str, rule_id: str, verdict: str, note: str, source: str, path: str) -> None:
+    def _put_verdict(self, project: str, fingerprint: str, rule_id: str, verdict: str, note: str, source: str, path: str,
+                     scope: str = "project") -> None:
         from rempart.registry import REGISTRY
 
         version = REGISTRY[rule_id].version if rule_id in REGISTRY else 1
         rank = "CASE {col} WHEN 'human' THEN 3 WHEN 'ai' THEN 2 ELSE 1 END"
         # a stronger source always wins; an equal one refreshes (a person changing their mind)
         self.db.execute(
-            "INSERT INTO verdicts(project, fingerprint, rule_id, verdict, note, ts, source, path, rule_version) VALUES (?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO verdicts(project, fingerprint, rule_id, verdict, note, ts, source, path, rule_version, scope) VALUES (?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(project, fingerprint) DO UPDATE SET verdict=excluded.verdict, note=excluded.note, ts=excluded.ts, "
-            "source=excluded.source, path=excluded.path, rule_version=excluded.rule_version "
+            "source=excluded.source, path=excluded.path, rule_version=excluded.rule_version, scope=excluded.scope "
             f"WHERE {rank.format(col='excluded.source')} >= {rank.format(col='verdicts.source')}",
-            (project, fingerprint, rule_id, verdict, note, time.time(), source, path, version),
+            (project, fingerprint, rule_id, verdict, note, time.time(), source, path, version, scope),
         )
 
     # ------------------------------------------------------------ history
@@ -382,12 +444,13 @@ class History:
             rule = rules[rule_id]
             sev = Severity[base_sev] if base_sev in Severity.__members__ else rule.severity
             conf = base_conf if base_conf is not None else rule.confidence
-            cases.append((ts, rule, path, line, sev, conf, verdict != "fp"))
+            cases.append((ts, rule, path, line, sev, conf, verdict != "fp", proj))
         cases.sort(key=lambda c: c[0])
         all_evidence = sorted(self.evidence(), key=lambda e: e.ts)
         scored: list[tuple[float, float, float, float, bool]] = []  # base risk, learned risk, base conf, learned conf, real
-        for ts, rule, path, line, sev, conf, real in cases:
-            cal = Calibrator([e for e in all_evidence if e.ts < ts], rules, now=ts)
+        for ts, rule, path, line, sev, conf, real, proj in cases:
+            visible = [e for e in all_evidence if e.ts < ts and (e.project == proj or (e.scope == "global" and e.source == "human"))]
+            cal = Calibrator(visible, rules, now=ts)
             plain = Finding(rule, path, line, "", severity=sev, confidence=conf)
             learned = Finding(rule, path, line, "", severity=sev, confidence=conf, raw=(int(sev), conf))
             cal.adjust(learned)

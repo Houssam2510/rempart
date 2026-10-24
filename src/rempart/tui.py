@@ -90,7 +90,7 @@ class Session:
 
     def scan(self, progress: Callable[[str, int, int], None] | None = None) -> ScanResult:
         """Same pipeline as `rempart scan PATH`: learned knowledge, attack paths, history."""
-        from rempart.cli import _project_id, _scan_profile
+        from rempart.cli import _scan_profile
         from rempart.history import History
         from rempart.scanners import ALL_SCANNERS
 
@@ -101,7 +101,7 @@ class Session:
             progress("learning and attack paths", len(ALL_SCANNERS), len(ALL_SCANNERS))
         hist = History()
         try:
-            project = _project_id(self.root)
+            project = hist.for_root(self.root)
             result.findings, learned = hist.apply_knowledge(project, result.findings)
             result.suppressed += learned
             result.add_attack_paths()
@@ -1021,15 +1021,15 @@ def build_app(root: Path, offline: bool = False, prod_only: bool = False) -> Any
 
         # ======================================================== 5 learning
         def _fill_learning(self) -> None:
-            from rempart.cli import _project_id
             from rempart.history import History
             from rempart.knowledge import FILE, Knowledge
             from rempart.registry import load_all_rules
 
             hist = History()
             try:
-                stats, sources = hist.rule_stats(), hist.source_counts()
-                replay = hist.replay(_project_id(root))
+                project = hist.for_root(root)
+                stats, sources = hist.rule_stats(project), hist.source_counts(project)
+                replay = hist.replay(project)
             finally:
                 hist.close()
             rt = Text()

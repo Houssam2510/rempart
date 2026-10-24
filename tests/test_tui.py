@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tests.helpers import write_tree
 
-from rempart.history import History
+from rempart.history import History, project_identity
 from rempart.knowledge import FILE
 from rempart.models import Finding, Severity
 from rempart.registry import REGISTRY
@@ -68,7 +68,7 @@ class LogicTest(Isolated):
         self.assertEqual(steps[-1][0], "learning and attack paths")
         self.assertEqual(len(s.history), 1)
         hist = History()
-        self.assertEqual(len(hist.scans(str(self.root.resolve()))), 1)
+        self.assertEqual(len(hist.scans(project_identity(self.root))), 1)
         hist.close()
 
     def test_teaching_a_reason_then_rescanning_removes_the_class(self):

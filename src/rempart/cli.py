@@ -27,7 +27,9 @@ from rempart.registry import OWASP_2025, load_all_rules
 
 
 def _project_id(root: Path) -> str:
-    return str(root.resolve())
+    from rempart.history import project_identity
+
+    return project_identity(root)
 
 
 def _scan_profile(root: Path, kind: str, **options: object) -> str:
@@ -112,7 +114,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     diff = None
     if not args.no_history:
         hist = History()
-        project = _project_id(root)
+        project = hist.for_root(root)
         result.findings, learned_suppressed = hist.apply_knowledge(project, result.findings)
         result.suppressed += learned_suppressed
         result.add_attack_paths()
@@ -288,7 +290,7 @@ def cmd_agent(args: argparse.Namespace) -> int:
     config = Config.load(root)
     result = run_scan(root, list(ALL_SCANNERS.values()), config, offline=args.offline, correlate=False)
     hist = History()
-    project = _project_id(root)
+    project = hist.for_root(root)
     result.findings, _ = hist.apply_knowledge(project, result.findings)
     targets = select_targets(result.findings, Severity.parse(args.min_severity), args.max_findings)
     if not targets:
@@ -390,7 +392,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return serve()
 
 
-def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: str = "") -> tuple[str, str]:
+def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: str = "", scope: str = "project") -> tuple[str, str]:
     """Record a person's verdict, and the reason behind it as project knowledge.
     Returns (rule id, what was learned or ""). Raises KeyError for an unknown finding,
     ValueError for an unusable reason. Shared by the CLI and the terminal interface."""
@@ -399,8 +401,8 @@ def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: s
 
     if because and verdict == "tp":
         raise ValueError("--because explains why a finding is not a problem; use it with --fp or --accept")
-    project = _project_id(root)
     hist = History()
+    project = hist.for_root(root)
     try:
         learned = ""
         if because:
@@ -412,7 +414,7 @@ def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: s
             learned = knowledge.learn(kind.strip(), value.strip(), row["rule_id"], f"{row['path']}:{row['line']}")
             knowledge.save(root)
         note = " · ".join(x for x in (note, f"because {because}" if because else "") if x)
-        return hist.triage(project, finding_id, verdict, note), learned
+        return hist.triage(project, finding_id, verdict, note, scope=scope), learned
     finally:
         hist.close()
 
@@ -422,11 +424,13 @@ def cmd_triage(args: argparse.Namespace) -> int:
 
     verdict = "fp" if args.fp else "tp" if args.tp else "accepted"
     try:
-        rule_id, learned = triage(Path(args.path).resolve(), args.id, verdict, args.note or "", args.because or "")
+        rule_id, learned = triage(Path(args.path).resolve(), args.id, verdict, args.note or "", args.because or "",
+                                  scope="global" if args.global_ else "project")
     except (KeyError, ValueError) as exc:
         print(f"rempart: {str(exc).strip(chr(39))}", file=sys.stderr)
         return 2
-    print(f"Recorded {verdict.upper()} for {args.id} ({rule_id}). Future scans will use it.")
+    print(f"Recorded {verdict.upper()} for {args.id} ({rule_id}). Future scans of "
+          + ("every project" if args.global_ else "this project") + " will use it.")
     if learned:
         print(f"Learned: {learned}. Every future scan of this repository applies it ({FILE}; commit it to share).")
     return 0
@@ -436,7 +440,7 @@ def cmd_history(args: argparse.Namespace) -> int:
     from rempart.history import History
 
     hist = History()
-    project = _project_id(Path(args.path))
+    project = hist.for_root(Path(args.path))
     scans = hist.scans(project, args.limit)
     if not scans:
         print("No scans recorded for this project yet.")
@@ -468,16 +472,17 @@ def cmd_learn(args: argparse.Namespace) -> int:
         print("Accepted:\n  " + "\n  ".join(accepted) + f"\nWritten to {FILE}.")
         return 0
     hist = History()
+    project = hist.for_root(root)
     if args.eval:
-        report = hist.replay(None if args.all_projects else _project_id(root))
+        report = hist.replay(None if args.all_projects else project)
         hist.close()
         if args.json:
             print(json.dumps(report, indent=2))
             return 0
         print(_render_replay(report))
         return 0
-    stats = hist.rule_stats()
-    sources = hist.source_counts()
+    stats = hist.rule_stats(project)
+    sources = hist.source_counts(project)
     hist.close()
     rules = load_all_rules()
     knowledge = Knowledge.load(root)
@@ -586,6 +591,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--because", metavar="KIND:VALUE",
                    help="teach the reason so it applies to the whole class: sanitizer:NAME[=categories] or placeholder:VALUE")
     t.add_argument("--path", default=".", help="project root (default: current directory)")
+    t.add_argument("--global", dest="global_", action="store_true",
+                   help="let this verdict calibrate every project, not only this one (verdicts are per project by default)")
     t.set_defaults(func=cmd_triage)
 
     h = sub.add_parser("history", help="score trend for a project")
