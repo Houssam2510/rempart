@@ -97,9 +97,14 @@ class LogicTest(Isolated):
         res = Session(self.root, offline=True).scan()
         actions = fix_first(res.findings)
         self.assertTrue(actions)
-        self.assertTrue(actions[0].target.startswith("chain:"))
-        self.assertIn("break it:", actions[0].detail)
-        chain = next(f for f in res.findings if f.fingerprint == actions[0].target[6:])
+        # since AUDIT.md R5 a chain that is only correlated is at most HIGH, so a CRITICAL finding may
+        # come first; at equal severity a chain still comes before a single finding
+        chain_actions = [a for a in actions if a.target.startswith("chain:")]
+        self.assertTrue(chain_actions)
+        first_chain = actions.index(chain_actions[0])
+        self.assertFalse([a for a in actions[:first_chain] if a.severity <= chain_actions[0].severity])
+        self.assertIn("break it:", chain_actions[0].detail)
+        chain = next(f for f in res.findings if f.fingerprint == chain_actions[0].target[6:])
         members = set(chain.extra["members"])
         self.assertFalse([a for a in actions if a.target.startswith("finding:") and a.target[8:] in members])
 
@@ -154,7 +159,9 @@ class AppTest(Isolated, unittest.IsolatedAsyncioTestCase):
             app = self.app
             self.assertEqual(app.query_one("#views").active, "overview")
             self.assertTrue(app.actions)
-            await pilot.press("enter")  # first "fix first" action is a proven path
+            target = next(i for i, a in enumerate(app.actions) if a.target.startswith("chain:"))
+            app.query_one("#actions").highlighted = target  # the chain's action, wherever severity ranks it
+            await pilot.press("enter")
             await pilot.pause()
             self.assertEqual(app.query_one("#views").active, "paths")
 

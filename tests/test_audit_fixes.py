@@ -801,5 +801,83 @@ class R4FileKindsTest(IsolatedHome):
         self.assertTrue([f for f in res.findings if f.rule.id == "CHAIN-DEBUG-CONSOLE-EXPOSED"])
 
 
+PINNED = "@11d5960a326750d5838078e36cf38b85af677262"
+
+
+class R5ChainsTest(IsolatedHome):
+    def scan(self, files):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r5-{len(list(self.tmp.iterdir()))}", files)
+        return run_scan(root, list(ALL_SCANNERS.values()), Config(), offline=True).findings
+
+    def chains(self, findings, rule=None):
+        return [f for f in findings if f.rule.domain == "attack-path" and (rule is None or f.rule.id == rule)]
+
+    FLASK_DEBUG = "from flask import Flask\napp = Flask(__name__)\n\nif __name__ == '__main__':\n    app.run(host='0.0.0.0', debug=True)\n"
+
+    def test_critical_is_reserved_for_linked_chains(self):
+        found = self.chains(self.scan({"app.py": self.FLASK_DEBUG}), "CHAIN-DEBUG-CONSOLE-EXPOSED")
+        self.assertTrue(found)
+        self.assertEqual({f.verification for f in found}, {"correlated"})
+        self.assertEqual({f.severity.name for f in found}, {"HIGH"})
+
+    def test_debug_console_chain_is_werkzeug_only(self):
+        files = {"proj/settings/production.py": "DEBUG = True\n",
+                 "serve.py": "import uvicorn\n\nuvicorn.run('proj.asgi:application', host=\"0.0.0.0\", port=8000)\n"}
+        findings = self.scan(files)
+        self.assertIn("CTX-BIND-ALL", {f.rule.id for f in self.scan_context(files)})
+        self.assertFalse(self.chains(findings, "CHAIN-DEBUG-CONSOLE-EXPOSED"))
+
+    def scan_context(self, files):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r5c-{len(list(self.tmp.iterdir()))}", files)
+        return run_scan(root, [ALL_SCANNERS["code"]], Config(), offline=True).context
+
+    def test_narrative_states_only_the_evidence_found(self):
+        xss = "export function show(el, html) {\n  el.innerHTML = html;\n}\n"
+        cookie = "SESSION_COOKIE_HTTPONLY = False\n"
+        found = self.chains(self.scan({"src/view.js": xss, "proj/settings.py": cookie}), "CHAIN-XSS-SESSION-THEFT")
+        self.assertTrue(found)
+        self.assertNotIn("localStorage", found[0].message)
+        self.assertIn("cookie", found[0].message.lower())
+        stored = "export function login(t) {\n  localStorage.setItem('access_token', t);\n}\n"
+        found = self.chains(self.scan({"src/view.js": xss, "src/auth.js": stored}), "CHAIN-XSS-SESSION-THEFT")
+        self.assertIn("localStorage", found[0].message)
+
+    def test_maintainer_dispatch_inputs_are_not_untrusted(self):
+        dispatch = ("name: release\non:\n  workflow_dispatch:\n    inputs:\n      version: {type: string}\npermissions:\n  contents: write\n"
+                    "jobs:\n  r:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo \"${{ inputs.version }}\"\n")
+        oidc = ("name: cleanup\non:\n  pull_request_target:\n    types: [closed]\npermissions:\n  id-token: write\n"
+                "jobs:\n  c:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo done\n")
+        findings = self.scan({".github/workflows/release.yml": dispatch, ".github/workflows/cleanup.yml": oidc})
+        self.assertFalse(self.chains(findings, "CHAIN-CI-UNTRUSTED-TO-RELEASE"))
+        inj = [f for f in findings if f.rule.id == "GHA-SCRIPT-INJECTION"]
+        self.assertTrue(inj and all(f.severity.name == "LOW" for f in inj))
+
+    def test_workflow_run_checkout_of_the_head_with_oidc_or_env_writes_is_a_linked_chain(self):
+        wf = ("name: preview\non:\n  workflow_run:\n    workflows: [\"tests\"]\n    types: [completed]\n"
+              "permissions:\n  contents: read\n  id-token: write\n"
+              "jobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n"
+              f"      - uses: actions/checkout{PINNED}\n        with:\n          ref: ${{{{ github.event.workflow_run.head_sha }}}}\n"
+              f"      - uses: actions/download-artifact{PINNED}\n        with:\n          name: meta\n"
+              "      - run: echo \"BUILD_ID=$(cat meta/id)\" >> \"$GITHUB_ENV\"\n      - run: ./deploy.sh\n")
+        findings = self.scan({".github/workflows/preview.yml": wf})
+        ids = {f.rule.id for f in findings}
+        self.assertIn("GHA-PWN-REQUEST", ids)
+        self.assertIn("GHA-ENV-INJECTION", ids)
+        chain = self.chains(findings, "CHAIN-CI-UNTRUSTED-TO-RELEASE")
+        self.assertEqual([(c.verification, c.severity.name) for c in chain], [("linked", "CRITICAL")])
+        no_oidc = wf.replace("  id-token: write\n", "").replace("      - run: echo \"BUILD_ID=$(cat meta/id)\" >> \"$GITHUB_ENV\"\n", "")
+        quiet = self.scan({".github/workflows/preview.yml": no_oidc})
+        self.assertIn("GHA-PWN-REQUEST", {f.rule.id for f in quiet})
+        self.assertFalse(self.chains(quiet, "CHAIN-CI-UNTRUSTED-TO-RELEASE"))
+
+
 if __name__ == "__main__":
     unittest.main()

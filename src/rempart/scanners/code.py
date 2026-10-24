@@ -953,7 +953,7 @@ class PythonAnalyzer(ast.NodeVisitor):
         for name in names:
             v = node.value
             if self.is_settings and name == "DEBUG" and isinstance(v, ast.Constant) and v.value is True:
-                self.add(R_DEBUG, node, "DEBUG = True in a settings module.")
+                self.add(R_DEBUG, node, "DEBUG = True in a settings module.", extra={"framework": "django"})
             if self.is_settings and name in ("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SESSION_COOKIE_HTTPONLY") \
                     and isinstance(v, ast.Constant) and v.value is False:
                 self.add(R_COOKIE, node, f"{name} = False.")
@@ -999,7 +999,7 @@ class PythonAnalyzer(ast.NodeVisitor):
             if algs is not None and "none" in ast.unparse(algs).lower():
                 self.add(R_JWT, node, "jwt.decode accepts the 'none' algorithm.")
         if short == "run" and _kw_is(node, "debug", True):
-            self.add(R_DEBUG, node, "app.run(debug=True).")
+            self.add(R_DEBUG, node, "app.run(debug=True).", extra={"framework": "flask"})  # the Werkzeug debugger
         if name == "tempfile.mktemp" or name == "mktemp":
             self.add(R_TEMPFILE, node, "tempfile.mktemp() is race-prone.")
         if short == "Environment" and _kw_is(node, "autoescape", False):

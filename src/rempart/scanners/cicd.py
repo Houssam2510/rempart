@@ -29,7 +29,7 @@ S7 = "CICD-SEC-7 Insecure System Configuration"
 S8 = "CICD-SEC-8 Ungoverned 3rd Party Services"
 S9 = "CICD-SEC-9 Improper Artifact Integrity Validation"
 
-R_PWN = rule("GHA-PWN-REQUEST", "pull_request_target checks out untrusted PR code", C, "cicd", cwe=("CWE-829", "CWE-94"), owasp=(A08, A01), frameworks=(S4,),
+R_PWN = rule("GHA-PWN-REQUEST", "Privileged workflow checks out untrusted pull-request code", C, "cicd", cwe=("CWE-829", "CWE-94"), owasp=(A08, A01), frameworks=(S4,),
              fix="Use `pull_request` for anything that builds PR code. If pull_request_target is required, never check out the PR head, and keep secrets, write tokens and caches out of that job.",
              refs=("https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/",))
 R_PRT = rule("GHA-PULL-REQUEST-TARGET", "pull_request_target trigger", M, "cicd", cwe="CWE-829", owasp=A08, frameworks=(S4,),
@@ -53,6 +53,11 @@ R_UNSECURE_CMDS = rule("GHA-UNSECURE-COMMANDS", "ACTIONS_ALLOW_UNSECURE_COMMANDS
                        fix="Remove it; the deprecated set-env/add-path commands let log output inject environment variables.")
 R_ARTIFACT = rule("GHA-WORKFLOW-RUN-ARTIFACT", "workflow_run consumes artifacts from an untrusted run", M, "cicd", cwe="CWE-345", owasp=A08, frameworks=(S9,),
                   fix="Treat artifacts from PR-triggered runs as untrusted data: never execute them, extract to a temp dir, validate content.", confidence=0.6)
+R_ENV_INJECT = rule("GHA-ENV-INJECTION", "Untrusted content written to GITHUB_ENV or GITHUB_PATH", H, "cicd", cwe=("CWE-94", "CWE-78"), owasp=(A08, A05),
+                    frameworks=(S4,),
+                    fix="Never write artifact or event content to $GITHUB_ENV / $GITHUB_PATH in a workflow triggered by untrusted runs: a crafted "
+                        "value sets LD_PRELOAD, NODE_OPTIONS or PATH for every later step. Validate it strictly or pass it through step outputs.",
+                    confidence=0.7)
 R_SELF_HOSTED = rule("GHA-SELF-HOSTED-PUBLIC", "Self-hosted runner on pull request events", M, "cicd", cwe="CWE-668", owasp=A01, frameworks=(S7,),
                      fix="Use ephemeral, isolated runners for PR builds. A persistent self-hosted runner lets a PR plant malware for the next job.", confidence=0.6)
 R_CURL_SH = rule("CI-CURL-PIPE-SHELL", "Pipeline downloads and executes a remote script", M, "cicd", cwe="CWE-494", owasp=A08, frameworks=(S3,),
@@ -72,6 +77,11 @@ UNTRUSTED = re.compile(
     r"github\.head_ref|inputs\.[\w-]+|steps\.[\w-]+\.outputs\.[\w-]+)\s*\}\}"
 )
 PR_HEAD = re.compile(r"github\.event\.pull_request\.head\.(?:sha|ref)|github\.head_ref|refs/pull/")
+# the code of the run that triggered a workflow_run workflow: a fork's, for pull-request CI
+RUN_HEAD = re.compile(r"github\.event\.workflow_run\.(?:head_sha|head_branch|head_repository|head_commit\.id)")
+# triggers whose inputs come only from people with write access; workflow_call is excluded:
+# its caller may forward untrusted data
+TRUSTED_TRIGGERS = {"workflow_dispatch", "push", "schedule", "release", "create", "delete", "merge_group", "repository_dispatch"}
 
 
 def _triggers(doc: dict[str, Any]) -> set[str]:
@@ -118,7 +128,8 @@ class CICDScanner:
                 f.severity, f.confidence = Severity.LOW, 0.5
             yield f
 
-    def _run_steps(self, rel: str, lines: list[str]) -> Iterator[Finding]:
+    def _run_steps(self, rel: str, lines: list[str], trusted_inputs: bool = False, untrusted_trigger: bool = False,
+                   downloads_artifacts: bool = False) -> Iterator[Finding]:
         in_run, run_indent = False, 0
         for i, line in enumerate(lines, 1):
             stripped = line.strip()
@@ -136,11 +147,19 @@ class CICDScanner:
                 continue
             for um in UNTRUSTED.finditer(content):
                 expr = um.group(0)
-                sev = Severity.MEDIUM if ("inputs." in expr or "steps." in expr) else None
-                f = Finding(R_INJECT, rel, i, f"{expr} is expanded inside a shell script.", snippet=stripped[:200], extra={"anchor": f"{expr}:{stripped[:80]}"})
+                maintainer_input = trusted_inputs and "inputs." in expr
+                sev = Severity.LOW if maintainer_input else Severity.MEDIUM if ("inputs." in expr or "steps." in expr) else None
+                f = Finding(R_INJECT, rel, i, f"{expr} is expanded inside a shell script"
+                            + (" (only maintainers can trigger this workflow: hygiene, not an untrusted input)." if maintainer_input else "."),
+                            snippet=stripped[:200], extra={"anchor": f"{expr}:{stripped[:80]}"})
+                if maintainer_input:
+                    f.extra["trusted_input"] = True
                 if sev is not None:
                     f.severity, f.confidence = sev, 0.5
                 yield f
+            if untrusted_trigger and re.search(r"GITHUB_(?:ENV|PATH)", content) and (
+                    re.search(r"\$\(\s*cat\b|\$\(<|<\s*[\w./-]+|\$\{\{\s*github\.event", content) or downloads_artifacts):
+                yield Finding(R_ENV_INJECT, rel, i, "Content from an untrusted run or event is written to GITHUB_ENV/GITHUB_PATH.", snippet=stripped[:200])
             if re.search(r"(?:echo|printf|tee|>>?)\s[^\n]*\$\{\{\s*secrets\.", content) and "GITHUB_ENV" not in content and "add-mask" not in content:
                 yield Finding(R_SECRET_ECHO, rel, i, "A secret is echoed or written out.", snippet=re.sub(r"secrets\.\w+", "secrets.****", stripped)[:200])
             if re.search(r"\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?(?:ba)?sh\b", content):
@@ -187,14 +206,21 @@ class CICDScanner:
             yield Finding(R_PERMS, rel, 1, "No top-level `permissions:`; jobs get the repository default token scope.", snippet="permissions (missing)")
         if "ACTIONS_ALLOW_UNSECURE_COMMANDS" in text and re.search(r"ACTIONS_ALLOW_UNSECURE_COMMANDS:\s*['\"]?true", text):
             yield Finding(R_UNSECURE_CMDS, rel, ln("ACTIONS_ALLOW_UNSECURE_COMMANDS"), "Unsecure workflow commands enabled.", snippet="ACTIONS_ALLOW_UNSECURE_COMMANDS: true")
-        if "workflow_run" in trig and re.search(r"download-artifact|actions/github-script[^\n]*\n[^\n]*listWorkflowRunArtifacts", text):
+        downloads = "workflow_run" in trig and bool(re.search(r"download-artifact|actions/github-script[^\n]*\n[^\n]*listWorkflowRunArtifacts", text))
+        if downloads:
             yield Finding(R_ARTIFACT, rel, ln("download-artifact"), "Artifacts from a triggering (possibly fork) run are downloaded.", snippet="workflow_run + download-artifact")
+        if "workflow_run" in trig and "actions/checkout" in text:
+            head = next((i for i, l in enumerate(lines, 1) if RUN_HEAD.search(l) and re.search(r"\b(?:ref|repository):", l)), 0)
+            if head:
+                yield Finding(R_PWN, rel, head, "workflow_run workflow checks out the triggering run's code (a fork's, for pull requests) with "
+                              "repository privileges.", snippet="workflow_run + checkout of the triggering head")
         if trig & {"pull_request", "pull_request_target"} and re.search(r"runs-on:\s*\[?[^\n]*self-hosted", text):
             yield Finding(R_SELF_HOSTED, rel, ln("self-hosted"), "Self-hosted runner reachable from pull requests.", snippet="runs-on: self-hosted")
         if re.search(r"secrets:\s*inherit", text):
             yield Finding(R_INHERIT, rel, ln("secrets: inherit"), "secrets: inherit forwards every secret.", snippet="secrets: inherit")
         yield from self._uses(rel, lines)
-        yield from self._run_steps(rel, lines)
+        yield from self._run_steps(rel, lines, trusted_inputs=bool(trig) and trig <= TRUSTED_TRIGGERS, untrusted_trigger=untrusted_trigger,
+                                   downloads_artifacts=downloads)
 
     def composite_action(self, ctx: ScanContext, rel: str) -> Iterator[Finding]:
         lines = ctx.lines(rel)
