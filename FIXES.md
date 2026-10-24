@@ -58,7 +58,7 @@ Chaque test a été écrit et vu en échec avant le correctif (exécuté), puis 
 | F8 | corrigé | `61c6430` | `F8McpBoundariesTest` (4) | Les images tirées d'un registre via MCP ne sont pas soumises au filtre « public seulement » (un registre interne reste joignable). `test_mcp.py` accorde explicitement sa racine temporaire. |
 | F9 | corrigé | `a4db1e4` | `F9SearchCannotHangTest` (4) | La recherche littérale reste en processus : elle est linéaire, sans risque ReDoS. `test_agent.py` passe `regex=True` pour l'appel qu'il vérifie. |
 | SELF | corrigé | `59eadba`, `b097448` | `SelfScanPinnedActionsTest` | Les 5 actions de `release.yml` sont épinglées, pas seulement celle de PyPI. AUDIT.md, FIXES.md et `bench/realworld|holdout` sont exclus du dogfooding : `DATA-TLS-DISABLED` s'y déclenchait sur de la prose (à traiter dans R4). |
-| R1 – R7 | à faire (phase 2) | | | |
+| R1 – R7 | voir phase 2 | | | |
 
 ### Mesures après la phase 1 — exécuté sur `b097448`
 
@@ -76,3 +76,59 @@ Chaque test a été écrit et vu en échec avant le correctif (exécuté), puis 
 - `tests/test_tui.py` : l'historique est recherché par `project_identity(root)` au lieu du chemin brut (F1 change le format de l'identifiant). L'assertion est inchangée.
 - `tests/test_mcp.py` : le serveur reçoit explicitement le dossier temporaire scanné comme racine (F8). Les assertions sont inchangées.
 - `tests/test_agent.py` : l'appel direct `search_code(r"^OPS", "*.py")` passe `regex=True`, puisque la recherche est littérale par défaut depuis F9. L'assertion est inchangée.
+
+## Phase 2 — robustesse et précision
+
+Même méthode : chaque test a été écrit et vu en échec avant le correctif, puis vu passer. Tous sont dans `tests/test_audit_fixes.py`. Aucun correctif ne nomme un fichier, un dépôt ou une fonction des dépôts de l'audit.
+
+| Id | Statut | Commits | Tests | Reste incomplet |
+|---|---|---|---|---|
+| R1 | corrigé | `2081f59` | `R1NoCrashTest` (moteur exécuté sur toute la bibliothèque standard ; fonctions qui renvoient des conteneurs constants différents) | — |
+| R2 | corrigé | `cd66dbb`, `cce66de`, `5f2af1e`, `2ed7941` | `R2SafeResolutionTest` (5) | Python seulement : les appels JavaScript restent liés comme avant. Une fonction du projet dont le nom est celui d'un échappeur connu (`escape_html`…) est crue sur son nom, même si elle n'échappe rien. `cce66de` et `5f2af1e` corrigent deux régressions introduites par `cd66dbb` et trouvées par les mesures de fin de phase (voir plus bas) ; `2ed7941` corrige le coût en temps de `5f2af1e`. |
+| R3 | corrigé | `109e54e` | `R3ImportAliasesTest` (2) | Python seulement. `importlib.import_module` / `__import__` dynamiques ne sont pas suivis. |
+| R4 | corrigé | `4d99163` | `R4FileKindsTest` (5) | Heuristique sur les chemins (`filekind.py` en donne la liste) : un fichier de développement nommé autrement est traité comme du code livré. |
+| R5 | corrigé | `5d73e96` | `R5ChainsTest` (5) | Un « lien » reste une co-occurrence dans un même workflow ou une route reliée par le graphe, pas une preuve d'exploitation. |
+| R6 | corrigé | `825b2b4`, `2fc0217`, `86a81fd`, `b2cebe3`, `2243c1a`, `a07836c`, `2b8c75d`, `c40c1f9`, `31d2c39` | `R6FalsePositivesTest` (10) | Les listes de paquets populaires (`src/rempart/data/`) datent de leur téléchargement : `scripts/update_popular.py` les régénère. Une route Flask qui renvoie une **liste** est encore signalée XSS (Flask ≥ 2.2 la sérialise en JSON) ; un dict ne l'est pas. Un `csrf_exempt` sur un webhook dont la signature est vérifiée reste signalé (FP étiqueté dans le bench réel). |
+| R7 | corrigé | `58f830d` | `R7TerraformValuesTest` (4) | Cas simples seulement : valeurs par défaut, `terraform.tfvars` / `*.auto.tfvars` du même dossier, locals littéraux, `[ref]`, `ref.attr`, `lookup()`, `"${…}"`. Les entrées passées à un module enfant (`module "x" { … }`) ne sont pas propagées ; un `for_each` à plusieurs éléments n'est pas résolu. Une valeur non résolue est plafonnée à MEDIUM / 0,5 avec « Value not resolved » ; un CIDR non résolu ne produit rien (comme avant). |
+
+### Régressions trouvées en fin de phase, et corrigées
+
+- **OWASP, invisible dans le score** : après `cd66dbb`, `helpers.utils.escape_for_html(...)` était résolu vers le code du projet, qui échappe caractère par caractère, ce que le moteur ne sait pas prouver. Le score par catégorie baissait à peine (99,4 → 99,3 ; 87,7 → 87,5), mais un diff cas par cas montrait **256 nouveaux `CODE-XSS-SINK` HIGH** dans d'autres catégories. Corrigé par `cce66de` : les noms d'échappeurs passent avant la résolution (`NEUTRALIZERS` et les méthodes de chaîne restent après : `Repo().find` n'est pas `str.find`). Le diff ne garde ensuite qu'un changement : 19 pièges xpathi perdent un `CODE-PATH-TRAVERSAL` faux (le fichier ouvert est un chemin constant ; `bar.replace(...)` n'est plus pris pour une opération de fichier, R6).
+- **Bench réel** : une méthode héritée d'une classe de base du projet (`User.to_collection_dict`, définie sur un mixin) n'était plus résolue de façon certaine ; le dict renvoyé devenait du texte souillé, d'où 3 `CODE-XSS-SINK` HIGH faux dans microblog. Corrigé par `5f2af1e` (recherche dans les bases, dans l'ordre, comme Python), puis `2ed7941` pour le temps (django 251 s → 109 s, mêmes résultats).
+
+### Mesures après la phase 2 — exécuté sur `2ed7941`
+
+| Mesure | Après P1 | Après P2 |
+|---|---|---|
+| Tests | 203 OK | **236 OK**, 0 sautés |
+| Bench interne (précision / rappel) | 100 % / 97,8 % | 100 % / **98,9 %** (iac 87,5 % → 100 % : R7 trouve le cas qui dépendait d'une variable). `--check bench/baseline.json` : aucune régression. |
+| OWASP sans INFO / avec INFO | 99,4 / 87,7 | 99,4 / 87,7 |
+| Bench réel strict / large | 4 % / 21 % (24 étiquetés) | **50 % / 75 %** (8 étiquetés) |
+| django (stress) | plantage, exit 3 | **0 plantage**, 109 s, 2/34/304/135 |
+| Dogfooding (`scan . --fail-on high`) | exit 0 | exit 0 |
+
+Les 50 s de django en phase 0 ne sont pas comparables : le scanner de code y plantait avant d'avoir fini.
+
+#### Bench réel par dépôt (top 10 critique/high)
+
+| Dépôt | Temps | CRIT/HIGH/MED/LOW | Top | VP | FP | Discutable | Stricte | Large |
+|---|---|---|---|---|---|---|---|---|
+| microblog | 0,6 s | 0/0/3/4 (avant 0/2/3/4) | 0 (avant 2) | — | — | — | n/a | n/a |
+| djangoproject.com | 7,8 s | 0/1/22/28 (avant 1/10/25/25) | 1 (avant 10) | 0 | 1 | 0 | 0 % | 0 % |
+| commerce | 0,3 s | 0/0/0/2 | 0 | — | — | — | n/a | n/a |
+| terraform-aws-eks | 2,1 s | 0/0/17/14 (avant 0/3/23/16) | 0 (avant 3) | — | — | — | n/a | n/a |
+| microservices-demo | 2,5 s | 2/5/60/122 (avant 2/7/62/119) | 7 (avant 9) | 4 | 1 | 2 | 57 % | 86 % |
+| **Total** | | | **8** (avant 24) | **4** | **2** | **2** | **50 %** | **75 %** |
+
+**À lire avec prudence** : ces cinq dépôts sont l'ensemble de réglage. Les correctifs ont été écrits en connaissant leurs faux positifs (règles générales, mais choisies en les regardant). Le chiffre honnête sera celui des dépôts holdout en phase 5. Le top 10 ne contient plus que 8 résultats : la précision porte sur moins d'éléments, et rien ici ne mesure le rappel sur ces dépôts.
+
+**6 étiquettes ajoutées** dans `bench/realworld/labels.json` (champ `labelled_in`), en lisant le code, pour les résultats du top 10 qui n'en avaient pas. Ce sont les seules étiquettes qui ne viennent pas de l'audit :
+
+- djangoproject.com `CODE-CSRF-DISABLED` `fundraising/views.py:281` : **fp** (webhook Stripe, signature vérifiée par `construct_event`) ;
+- microservices-demo `deploy-pr.yaml:44` `GHA-PWN-REQUEST` : **tp**, et `CHAIN-CI-UNTRUSTED-TO-RELEASE` : **tp** (le code de la PR est construit dans le job qui obtient les identifiants cloud OIDC ; l'environnement `gke-staging` exige peut-être une approbation, ce que le dépôt ne montre pas) ;
+- `GHA-ENV-INJECTION` `:65` : **tp** (le contenu de l'artefact de la PR est écrit dans `$GITHUB_ENV` sans validation), `:104` : **discutable** (dérivé de la même valeur), `:151` : **fp** (adresse attribuée par le load balancer).
+
+### Tests existants modifiés (rien n'est supprimé ni affaibli)
+
+- `tests/test_tui.py` (R5) : deux tests supposaient que la chaîne était la première action. Une chaîne seulement corrélée est désormais au plus HIGH, donc une découverte CRITICAL peut passer devant. Les tests cherchent l'action de la chaîne et vérifient qu'aucune action de sévérité inférieure ou égale ne la précède.
+- `tests/test_agent.py` (R6) : la table `OPS` était un littéral, que le moteur résout maintenant (l'`eval` n'y voit que des constantes). Elle est construite par `dict(...)`, pour garder la prémisse du test (un `eval` que l'analyse statique ne peut pas trancher). Les assertions sont inchangées.

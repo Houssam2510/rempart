@@ -209,6 +209,60 @@
    "line": 10,
    "label": "debatable",
    "reason": "dangerouslySetInnerHTML of CMS HTML (LOW, outside the metric)."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-CSRF-DISABLED",
+   "path": "fundraising/views.py",
+   "line": 281,
+   "label": "fp",
+   "reason": "Stripe webhook: csrf_exempt is required, and the request is authenticated by stripe.Webhook.construct_event (signature checked against STRIPE_ENDPOINT_SECRET).",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-PWN-REQUEST",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 44,
+   "label": "tp",
+   "reason": "workflow_run checks out the PR head (head_repository/head_sha, allow-unsafe-pr-checkout) and `skaffold run` builds it, with id-token: write and GKE credentials in the same job. The gke-staging environment may require reviewers; that is not visible in the repository.",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "CHAIN-CI-UNTRUSTED-TO-RELEASE",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 44,
+   "label": "tp",
+   "reason": "Same job: untrusted PR code is built (PWN-REQUEST:44) after google-github-actions/auth mints the OIDC-backed cloud credentials (OIDC-UNTRUSTED:34). The chain states only these two links.",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-ENV-INJECTION",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 65,
+   "label": "tp",
+   "reason": "PR_NUMBER is read from the pr_number artifact uploaded by the PR's own CI run and echoed into $GITHUB_ENV unvalidated: a newline in the file sets arbitrary variables (BASH_ENV, LD_PRELOAD) for later steps.",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-ENV-INJECTION",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 104,
+   "label": "debatable",
+   "reason": "NAMESPACE is derived from PR_NUMBER, already in the environment: a second injection only if PR_NUMBER was made multi-line with the <<DELIMITER syntax at line 65. Same root cause as line 65.",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-ENV-INJECTION",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 151,
+   "label": "fp",
+   "reason": "EXTERNAL_IP comes from status.loadBalancer.ingress of a Service, an address assigned by the cloud load balancer, not text from the pull request or the triggering run.",
+   "labelled_in": "phase 2 (tuning set): labelled by reading the code after R1-R7, before any further change"
   }
  ]
 }
