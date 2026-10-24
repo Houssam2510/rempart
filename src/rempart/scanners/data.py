@@ -99,6 +99,23 @@ _ENCRYPTING_CONNECTOR = re.compile(
 _LOCAL_TARGET = re.compile(r"(?i)host=/|@/|unix_socket|\.sock\b|@(?:localhost|127\.0\.0\.1|\[::1\])[:/]|host=(?:localhost|127\.0\.0\.1)\b")
 
 
+def _docstring_lines(text: str) -> set[int]:
+    """Line numbers covered by Python docstrings (module, class and function)."""
+    import ast
+
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return set()
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                out |= set(range(first.lineno, (first.end_lineno or first.lineno) + 1))
+    return out
+
+
 class DataScanner:
     name = "data"
 
@@ -135,6 +152,7 @@ class DataScanner:
 
     def connection_strings(self, ctx: ScanContext, rel: str) -> Iterator[Finding]:
         connector = bool(_ENCRYPTING_CONNECTOR.search(ctx.text(rel) or ""))
+        prose = _docstring_lines(ctx.text(rel) or "") if rel.endswith(".py") else set()
         for i, line in enumerate(ctx.lines(rel), 1):
             if len(line) > 2000 or _PATTERN_LINE.search(line):
                 continue
@@ -153,6 +171,8 @@ class DataScanner:
                 if sev is not None:
                     f.severity, f.confidence = sev, 0.6
                 yield f
+            if i in prose or is_comment(line):
+                continue  # TLS settings quoted in a comment or docstring configure nothing (credentials above are still checked)
             if re.search(r"(?i)sslmode=disable|[?&](?:ssl|tls|useSSL)=false\b|sslmode\s*[:=]\s*['\"]disable['\"]", line):
                 why = ("the file uses a connector that encrypts the connection itself" if connector
                        else "the connection goes to a local socket or this machine" if _LOCAL_TARGET.search(line) else "")

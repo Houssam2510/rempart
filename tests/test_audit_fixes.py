@@ -1118,6 +1118,12 @@ def search():
                 self.assertEqual(sqli.get(n), "CRITICAL", line)
 
 
+    def test_tls_settings_quoted_in_comments_or_docstrings_are_not_connections(self):
+        mod = '"""Connector notes: `sslmode=disable` is the documented setting behind the proxy."""\n\n# never ship sslmode=disable\nDSN = "postgresql://app@db.example:5432/app?sslmode=disable"\n'
+        found = [f.line for f in self.findings({"db.py": mod}, ("data",)) if f.rule.id == "DATA-TLS-DISABLED"]
+        self.assertEqual(found, [4])
+
+
 
 if __name__ == "__main__":
     unittest.main()
