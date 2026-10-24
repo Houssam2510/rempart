@@ -342,5 +342,57 @@ class F4ConfigFromBaseTest(IsolatedHome):
         self.assertNotIn("${{", scan_step["run"])  # inputs still only through env
 
 
+class F5AgentNeverSeesSecretsTest(IsolatedHome):
+    def workspace(self, files: dict[str, str]):
+        from rempart.agent import Workspace
+        from rempart.engine import ScanResult
+
+        root = self.project("ws", files)
+        return Workspace(ScanResult(root=str(root), findings=[], files_scanned=len(files), duration_s=0, scanners=[]), list(files))
+
+    def setUp(self):
+        super().setUp()
+        from tests.helpers import FAKE_AWS_KEY, FAKE_GH_TOKEN, FAKE_PRIVATE_KEY_HEADER
+
+        self.aws, self.gh = FAKE_AWS_KEY, FAKE_GH_TOKEN
+        self.generic = "q8Zr2" + "Lx7Wm4Tn9Vk3Hp6Dc"
+        body = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun"
+        self.ws = self.workspace({
+            "config.py": f"AWS_ACCESS_KEY_ID = '{self.aws}'\napi_secret = '{self.generic}'\nGH = '{self.gh}'\nDEBUG = False\n",
+            "deploy.pem": f"{FAKE_PRIVATE_KEY_HEADER}\n{body}\n-----END RSA PRIVATE KEY-----\n",
+            "notes.txt": f"key:\n{FAKE_PRIVATE_KEY_HEADER}\n{body}\n-----END RSA PRIVATE KEY-----\nend\n",
+            ".env": f"STRIPE=sk_live_{'x' * 24}\n",
+            ".env.production": "DB_PASSWORD=hunter2hunter2\n",
+            "credentials.json": '{"client_secret": "abc"}\n',
+            "infra/terraform.tfstate": '{"secret": "s"}\n',
+            "app.py": "print('hello')\n",
+        })
+
+    def test_read_file_masks_every_secret_the_scanner_knows(self):
+        text = self.ws.read_file("config.py", 1, 10)
+        for raw in (self.aws, self.gh, self.generic):
+            self.assertNotIn(raw, text)
+        self.assertIn("DEBUG = False", text)
+        notes = self.ws.read_file("notes.txt", 1, 10)
+        self.assertNotIn("MIIEowIBAAKCAQEA", notes)
+        self.assertIn("end", notes)
+
+    def test_search_code_masks_secrets_and_skips_sensitive_files(self):
+        out = self.ws.search_code("AKIA", "*")
+        self.assertNotIn(self.aws, out)
+        self.assertIn("config.py", out)
+        self.assertNotIn(".env", self.ws.search_code("STRIPE|DB_PASSWORD", "*"))
+
+    def test_known_sensitive_files_are_refused_even_when_committed(self):
+        for rel in (".env", ".env.production", "deploy.pem", "credentials.json", "infra/terraform.tfstate"):
+            with self.assertRaises(ValueError, msg=rel):
+                self.ws.read_file(rel, 1, 5)
+        self.assertIn("hello", self.ws.read_file("app.py", 1, 5))
+
+    def test_security_md_documents_it(self):
+        text = (Path(__file__).resolve().parents[1] / "SECURITY.md").read_text()
+        self.assertTrue("masked" in text and ".env" in text and "tfstate" in text)
+
+
 if __name__ == "__main__":
     unittest.main()

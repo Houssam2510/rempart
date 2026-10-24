@@ -136,6 +136,33 @@ def redact(value: str) -> str:
     return value[:4] + "*" * min(12, len(value) - 6) + value[-2:]
 
 
+_PEM_BLOCK = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|\Z)")
+_ASSIGN_BARE = re.compile(
+    r"""(?ix)
+    (?P<name>[a-z0-9_.\-]*(?:password|passwd|pwd|secret|api[_\-]?key|apikey|access[_\-]?key|auth[_\-]?token|
+        token|private[_\-]?key|client[_\-]?secret|credentials?)[a-z0-9_]*)
+    \s*(?::=|=|:)\s*(?P<value>[^\s"'`#,;{}()\[\]$]{6,200})
+    """
+)
+
+
+def mask_secrets(text: str) -> str:
+    """Mask what the secrets scanner recognises before text leaves the machine (the AI
+    agent's reads and searches). Errs on the side of masking: every provider format,
+    private-key blocks, JWTs, and any value assigned to a secret-looking name, quoted or
+    not, whatever its entropy."""
+    text = _PEM_BLOCK.sub("[private key removed by rempart]", text)
+    out = []
+    for line in text.splitlines(keepends=True):
+        for _, rx in _COMPILED:
+            line = rx.sub(lambda m: redact(m.group(0)), line)
+        line = _JWT.sub(lambda m: redact(m.group(0)), line)
+        line = _ASSIGN.sub(lambda m: m.group(0).replace(m.group("value"), redact(m.group("value"))), line)
+        line = _ASSIGN_BARE.sub(lambda m: m.group(0)[:m.start("value") - m.start(0)] + redact(m.group("value")), line)
+        out.append(line)
+    return "".join(out)
+
+
 def _is_test_path(rel: str) -> bool:
     return bool(re.search(r"(?i)(?:^|/)(?:tests?|__tests__|spec|fixtures?|mocks?|examples?|docs?)(?:/|$)|\.(?:test|spec)\.", rel))
 

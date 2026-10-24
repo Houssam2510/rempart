@@ -36,6 +36,7 @@ from typing import Any, Callable
 
 from rempart.engine import ScanResult
 from rempart.models import Finding, Severity
+from rempart.scanners.secrets import mask_secrets
 
 # Model selection: REMPART_MODEL (or --model) wins; otherwise the newest Opus-tier
 # model the account can use, discovered through the Anthropic Models API.
@@ -176,12 +177,22 @@ class AgentReport:
                       + self.output_tokens * price[1]) / 1_000_000, 4)
 
 
+# Files that hold credentials by convention. They are never sent to the model, even when
+# committed: a finding about one is described from the scan, not from its content.
+SENSITIVE_FILES = re.compile(
+    r"(?i)(?:^|/)(?:\.env(?:\.[\w.-]+)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore|kdbx|ovpn|tfstate(?:\.backup)?|tfvars)"
+    r"|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]*credentials[^/]*|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.htpasswd"
+    r"|secrets?\.(?:ya?ml|json|toml|env)|service[-_]?account[^/]*\.json)$")
+
+
 class Workspace:
-    """The agent's only window on the repository: read and search, nothing else."""
+    """The agent's only window on the repository: read and search, nothing else.
+    Everything it returns passes through `mask_secrets` (AUDIT.md F5)."""
 
     def __init__(self, result: ScanResult, files: list[str]) -> None:
         self.root = Path(result.root).resolve()
-        self.files = set(files)
+        self.sensitive = {f for f in files if SENSITIVE_FILES.search(f)}
+        self.files = set(files) - self.sensitive
         self.findings = {f.fingerprint: f for f in result.findings}
 
     def resolve_id(self, fid: str) -> Finding | None:
@@ -191,6 +202,8 @@ class Workspace:
 
     def _safe(self, rel: str) -> Path:
         rel = rel.strip().removeprefix("./")
+        if rel in self.sensitive or SENSITIVE_FILES.search(rel):
+            raise ValueError(f"{rel} holds credentials by convention; Rempart never sends its content to the model")
         if rel not in self.files:
             raise ValueError(f"{rel} is not a file of the scanned repository")
         p = (self.root / rel).resolve()
@@ -203,8 +216,8 @@ class Workspace:
         floor = Severity.parse(min_severity)
         rows = [f for f in self.findings.values() if f.severity is not None and f.severity >= floor and (domain in ("any", "", "*") or f.rule.domain == domain)]
         rows.sort(key=lambda f: -f.risk)
-        return json.dumps([{"id": f.fingerprint[:10], "rule": f.rule.id, "severity": f.severity.name if f.severity else "", "domain": f.rule.domain,
-                            "location": f"{f.path}:{f.line}", "message": f.message[:300]} for f in rows[:80]], indent=1)
+        return mask_secrets(json.dumps([{"id": f.fingerprint[:10], "rule": f.rule.id, "severity": f.severity.name if f.severity else "",
+                                         "domain": f.rule.domain, "location": f"{f.path}:{f.line}", "message": f.message[:300]} for f in rows[:80]], indent=1))
 
     def get_finding(self, id: str) -> str:
         f = self.resolve_id(id)
@@ -212,13 +225,16 @@ class Workspace:
             raise ValueError(f"unknown or ambiguous finding id {id!r}")
         d = f.to_dict()
         d["id"] = f.fingerprint[:10]
-        return json.dumps(d, indent=1, default=str)
+        return mask_secrets(json.dumps(d, indent=1, default=str))
 
     def read_file(self, path: str, start_line: int, end_line: int) -> str:
         p = self._safe(path)
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
         start = max(1, int(start_line))
         end = min(len(lines), int(end_line), start + 399)
+        # mask the whole file first, so a multi-line private key is caught whatever the range
+        lines = mask_secrets("\n".join(lines)).splitlines()
+        end = min(end, len(lines))
         body = "\n".join(f"{i:>5}  {lines[i - 1]}" for i in range(start, end + 1))
         return f"<file path={path!r} lines={start}-{end} of {len(lines)}>\n{body}\n</file>"
 
@@ -238,7 +254,7 @@ class Workspace:
                 continue
             if len(text) > 1_000_000:
                 continue
-            for i, line in enumerate(text.splitlines(), 1):
+            for i, line in enumerate(mask_secrets(text).splitlines(), 1):
                 if rx.search(line):
                     out.append(f"{rel}:{i}: {line.strip()[:200]}")
                     if len(out) >= 60:
