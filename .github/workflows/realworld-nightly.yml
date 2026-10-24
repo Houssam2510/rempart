@@ -1,0 +1,31 @@
+name: realworld-nightly
+
+# Precision on real repositories, every night: the audit's repositories at pinned commits,
+# compared with the labels in bench/realworld/labels.json. Fails on any regression against
+# bench/realworld/baseline.json (lower precision, a true positive lost, a crash, a timeout,
+# or an unlabelled finding in a top 10). After an intended change, label what is new and
+# regenerate the baseline with --json bench/realworld/baseline.json.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  realworld:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - name: Real-world precision (fails on regression)
+        env:
+          REMPART_BENCH_CACHE: ${{ runner.temp }}/realworld
+        run: python bench/realworld.py --stress -v --check bench/realworld/baseline.json --json realworld.json

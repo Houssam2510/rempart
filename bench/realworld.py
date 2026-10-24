@@ -16,6 +16,13 @@ human label (tp / fp / debatable) from labels.json.
 
 A finding of the top 10 that has no label is reported as UNLABELLED: precision is then
 provisional until someone reads the code and labels it. Labels are never inferred.
+
+    python bench/realworld.py --stress --check bench/realworld/baseline.json
+
+fails (exit 1) on a regression against an earlier --json result: lower strict or large
+precision (per repository or in total), a true positive that left the top 10, a new crash
+or timeout, or an UNLABELLED finding in the top 10 (precision cannot be trusted until it
+is labelled). Scan time is printed, not checked: shared CI machines vary too much.
 """
 
 from __future__ import annotations
@@ -110,6 +117,36 @@ def evaluate(repo: dict[str, str], findings: list[dict[str, Any]], labels: list[
             "counts": counts}
 
 
+def regressions(baseline: dict[str, Any], now: dict[str, Any]) -> list[str]:
+    """What got worse between two --json results; empty when nothing did."""
+    out: list[str] = []
+
+    def worse(what: str, before: float | None, after: float | None) -> None:
+        if before is not None and after is not None and after < before - 1e-9:
+            out.append(f"{what}: {before:.0%} -> {after:.0%}")
+
+    for name, cur in now.get("repos", {}).items():
+        old = baseline.get("repos", {}).get(name)
+        if old is None:
+            continue
+        if len(cur.get("errors") or []) > len(old.get("errors") or []):
+            out.append(f"{name}: new crash: {(cur.get('errors') or [''])[-1][:200]}")
+        if cur.get("timeout") and not old.get("timeout"):
+            out.append(f"{name}: timeout")
+        worse(f"{name} strict precision", old.get("strict"), cur.get("strict"))
+        worse(f"{name} large precision", old.get("large"), cur.get("large"))
+        kept = {(r["rule"], r["where"]) for r in cur.get("top") or []}
+        for r in old.get("top") or []:
+            if r["label"] == "tp" and (r["rule"], r["where"]) not in kept:
+                out.append(f"{name}: true positive {r['rule']} {r['where']} left the top 10")
+        for r in cur.get("top") or []:
+            if r["label"] == "UNLABELLED":
+                out.append(f"{name}: UNLABELLED {r['rule']} {r['where']} in the top 10: read the code and label it")
+    worse("total strict precision", baseline.get("summary", {}).get("strict"), now.get("summary", {}).get("strict"))
+    worse("total large precision", baseline.get("summary", {}).get("large"), now.get("summary", {}).get("large"))
+    return out
+
+
 def _pct(v: float | None) -> str:
     return "  n/a" if v is None else f"{v:5.0%}"
 
@@ -122,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=int, default=1800, help="seconds per repository before it counts as a timeout")
     ap.add_argument("--json", help="write the full results here")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every top-10 finding with its label")
+    ap.add_argument("--check", help="an earlier --json result: exit 1 on any regression against it")
     args = ap.parse_args(argv)
 
     manifest = Path(args.manifest)
@@ -167,8 +205,16 @@ def main(argv: list[str] | None = None) -> int:
     if tot["unlabelled"]:
         print(f"\n{tot['unlabelled']} top-10 finding(s) have no label: precision is provisional until they are labelled by reading the code.")
     summary = {**tot, "labelled": labelled, "strict": None if strict is None else round(strict, 3), "large": None if large is None else round(large, 3)}
+    report = {"summary": summary, "repos": results}
     if args.json:
-        Path(args.json).write_text(json.dumps({"summary": summary, "repos": results}, indent=1) + "\n")
+        Path(args.json).write_text(json.dumps(report, indent=1) + "\n")
+    if args.check:
+        found = regressions(json.loads(Path(args.check).read_text()), report)
+        for r in found:
+            print(f"REGRESSION {r}")
+        if found:
+            return 1
+        print(f"\nNo regression against {args.check}.")
     return 0
 
 

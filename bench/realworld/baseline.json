@@ -1,0 +1,195 @@
+{
+ "summary": {
+  "tp": 4,
+  "fp": 2,
+  "debatable": 2,
+  "unlabelled": 0,
+  "crashes": 0,
+  "labelled": 8,
+  "strict": 0.5,
+  "large": 0.75
+ },
+ "repos": {
+  "microblog": {
+   "commit": "a975ef64864354867c88e0ed3a17ba7d17dca752",
+   "seconds": 0.6,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 9,
+   "top": [],
+   "tp": 0,
+   "fp": 0,
+   "debatable": 0,
+   "unlabelled": 0,
+   "labelled": 0,
+   "strict": null,
+   "large": null,
+   "counts": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 3,
+    "LOW": 4,
+    "INFO": 2
+   }
+  },
+  "djangoproject.com": {
+   "commit": "2f3a10a91b684d218851fa6e8b667b9a50b834df",
+   "seconds": 7.4,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 56,
+   "top": [
+    {
+     "severity": "HIGH",
+     "rule": "CODE-CSRF-DISABLED",
+     "where": "fundraising/views.py:281",
+     "label": "fp",
+     "reason": "Stripe webhook: csrf_exempt is required, and the request is authenticated by stripe.Webhook.construct_event (signature checked against STRIPE_ENDPOINT_SECRET)."
+    }
+   ],
+   "tp": 0,
+   "fp": 1,
+   "debatable": 0,
+   "unlabelled": 0,
+   "labelled": 1,
+   "strict": 0.0,
+   "large": 0.0,
+   "counts": {
+    "CRITICAL": 0,
+    "HIGH": 1,
+    "MEDIUM": 22,
+    "LOW": 28,
+    "INFO": 5
+   }
+  },
+  "commerce": {
+   "commit": "f7521d57d29f0eb3d23c1399cf9bb299d61fcd21",
+   "seconds": 0.4,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 3,
+   "top": [],
+   "tp": 0,
+   "fp": 0,
+   "debatable": 0,
+   "unlabelled": 0,
+   "labelled": 0,
+   "strict": null,
+   "large": null,
+   "counts": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 0,
+    "LOW": 2,
+    "INFO": 1
+   }
+  },
+  "terraform-aws-eks": {
+   "commit": "91b8a8d944e3cf169483108acd12d5b1e47856f7",
+   "seconds": 2.1,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 39,
+   "top": [],
+   "tp": 0,
+   "fp": 0,
+   "debatable": 0,
+   "unlabelled": 0,
+   "labelled": 0,
+   "strict": null,
+   "large": null,
+   "counts": {
+    "CRITICAL": 0,
+    "HIGH": 0,
+    "MEDIUM": 17,
+    "LOW": 14,
+    "INFO": 8
+   }
+  },
+  "microservices-demo": {
+   "commit": "38e7348eb289eb5b87c0c6e8cb19ced0449dc389",
+   "seconds": 2.5,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 190,
+   "top": [
+    {
+     "severity": "CRITICAL",
+     "rule": "CHAIN-CI-UNTRUSTED-TO-RELEASE",
+     "where": ".github/workflows/deploy-pr.yaml:44",
+     "label": "tp",
+     "reason": "Same job: untrusted PR code is built (PWN-REQUEST:44) after google-github-actions/auth mints the OIDC-backed cloud credentials (OIDC-UNTRUSTED:34). The chain states only these two links."
+    },
+    {
+     "severity": "CRITICAL",
+     "rule": "GHA-PWN-REQUEST",
+     "where": ".github/workflows/deploy-pr.yaml:44",
+     "label": "tp",
+     "reason": "workflow_run checks out the PR head (head_repository/head_sha, allow-unsafe-pr-checkout) and `skaffold run` builds it, with id-token: write and GKE credentials in the same job. The gke-staging environment may require reviewers; that is not visible in the repository."
+    },
+    {
+     "severity": "HIGH",
+     "rule": "GHA-OIDC-UNTRUSTED",
+     "where": ".github/workflows/cleanup.yaml:36",
+     "label": "debatable",
+     "reason": "pull_request_target with OIDC, but no pull-request code is executed."
+    },
+    {
+     "severity": "HIGH",
+     "rule": "GHA-OIDC-UNTRUSTED",
+     "where": ".github/workflows/deploy-pr.yaml:34",
+     "label": "tp",
+     "reason": "workflow_run, checkout of head_sha with allow-unsafe-pr-checkout, GCP OIDC, fork artifact written to GITHUB_ENV."
+    },
+    {
+     "severity": "HIGH",
+     "rule": "GHA-ENV-INJECTION",
+     "where": ".github/workflows/deploy-pr.yaml:65",
+     "label": "tp",
+     "reason": "PR_NUMBER is read from the pr_number artifact uploaded by the PR's own CI run and echoed into $GITHUB_ENV unvalidated: a newline in the file sets arbitrary variables (BASH_ENV, LD_PRELOAD) for later steps."
+    },
+    {
+     "severity": "HIGH",
+     "rule": "GHA-ENV-INJECTION",
+     "where": ".github/workflows/deploy-pr.yaml:104",
+     "label": "debatable",
+     "reason": "NAMESPACE is derived from PR_NUMBER, already in the environment: a second injection only if PR_NUMBER was made multi-line with the <<DELIMITER syntax at line 65. Same root cause as line 65."
+    },
+    {
+     "severity": "HIGH",
+     "rule": "GHA-ENV-INJECTION",
+     "where": ".github/workflows/deploy-pr.yaml:151",
+     "label": "fp",
+     "reason": "EXTERNAL_IP comes from status.loadBalancer.ingress of a Service, an address assigned by the cloud load balancer, not text from the pull request or the triggering run."
+    }
+   ],
+   "tp": 4,
+   "fp": 1,
+   "debatable": 2,
+   "unlabelled": 0,
+   "labelled": 7,
+   "strict": 0.571,
+   "large": 0.857,
+   "counts": {
+    "CRITICAL": 2,
+    "HIGH": 5,
+    "MEDIUM": 60,
+    "LOW": 122,
+    "INFO": 1
+   }
+  },
+  "django": {
+   "commit": "0e128d524d0a7c55a955570d6e5da983ac6ce6c7",
+   "seconds": 108.7,
+   "exit": 0,
+   "timeout": false,
+   "errors": [],
+   "findings": 482
+  }
+ }
+}

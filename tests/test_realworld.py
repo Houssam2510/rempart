@@ -56,5 +56,33 @@ class ScoringTest(unittest.TestCase):
         self.assertFalse((ROOT / "bench" / "holdout" / "labels.json").exists(), "holdout labels are written only at the end")
 
 
+class RegressionCheckTest(unittest.TestCase):
+    BASE = {"summary": {"strict": 0.5, "large": 0.75, "crashes": 0},
+            "repos": {"r": {"strict": 0.5, "large": 1.0, "errors": [], "timeout": False,
+                            "top": [{"rule": "A", "where": "a.py:1", "label": "tp"}, {"rule": "B", "where": "b.py:2", "label": "fp"}]}}}
+
+    def run_with(self, **repo):
+        import copy
+
+        now = copy.deepcopy(self.BASE)
+        now["repos"]["r"].update(repo)
+        return rw.regressions(self.BASE, now)
+
+    def test_same_results_pass(self):
+        self.assertEqual(rw.regressions(self.BASE, self.BASE), [])
+
+    def test_lower_precision_a_lost_true_positive_a_crash_or_an_unlabelled_entry_fail(self):
+        self.assertTrue(self.run_with(strict=0.25))
+        self.assertTrue(self.run_with(large=0.5))
+        self.assertTrue(self.run_with(top=[{"rule": "B", "where": "b.py:2", "label": "fp"}]))
+        self.assertTrue(self.run_with(errors=["code: TypeError"]))
+        self.assertTrue(self.run_with(timeout=True))
+        unlabelled = self.BASE["repos"]["r"]["top"] + [{"rule": "C", "where": "c.py:3", "label": "UNLABELLED"}]
+        self.assertTrue(any("UNLABELLED" in r or "label" in r for r in self.run_with(top=unlabelled)))
+
+    def test_better_results_pass(self):
+        self.assertEqual(self.run_with(strict=1.0, top=[{"rule": "A", "where": "a.py:1", "label": "tp"}]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
