@@ -630,5 +630,33 @@ class SelfScanPinnedActionsTest(unittest.TestCase):
         self.assertEqual(bad, [])
 
 
+class R1NoCrashTest(unittest.TestCase):
+    def test_the_python_engine_runs_on_the_whole_standard_library(self):
+        """AUDIT.md: pyflow crashed on django (constant lists put in a set). The interpreter's
+        own standard library is a large, varied, always-available corpus."""
+        import sysconfig
+
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        stdlib = Path(sysconfig.get_paths()["stdlib"])
+        result = run_scan(stdlib, [ALL_SCANNERS["code"]], Config(exclude=["site-packages/**", "dist-packages/**"], include_tests=True),
+                          offline=True, correlate=False)
+        self.assertGreater(result.files_scanned, 300)
+        self.assertEqual(result.errors, [])
+
+    def test_functions_returning_different_constant_containers(self):
+        import ast
+
+        from rempart.pyflow import analyse_module, build_index
+
+        a = ast.parse("def options():\n    return ['a', 'b']\n")
+        b = ast.parse("def options():\n    return {'k': [1]}\n")
+        c = ast.parse("def use(obj):\n    return obj.options()\n")
+        index = build_index({"a.py": a, "b.py": b, "c.py": c})
+        analyse_module(c, lambda *args: None, index)
+
+
 if __name__ == "__main__":
     unittest.main()

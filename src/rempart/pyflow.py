@@ -195,6 +195,22 @@ class Summary:
     sinks: list[tuple[str, frozenset[int], int, str, str]] = field(default_factory=list)  # (cat, params, line, file, message)
 
 
+def const_key(value: Any) -> Any:
+    """A hashable stand-in for a constant, so constants can be compared in sets: function
+    summaries may return lists, dicts or sets, which are not hashable themselves."""
+    if isinstance(value, (list, tuple)):
+        return (type(value).__name__, tuple(const_key(v) for v in value))
+    if isinstance(value, dict):
+        return ("dict", tuple(sorted(((repr(k), const_key(v)) for k, v in value.items()), key=lambda kv: kv[0])))
+    if isinstance(value, (set, frozenset)):
+        return ("set", tuple(sorted(repr(v) for v in value)))
+    try:
+        hash(value)
+    except TypeError:
+        return ("repr", repr(value))
+    return value
+
+
 class ProjectIndex:
     """Function and method summaries for every Python file of the repository."""
 
@@ -206,7 +222,7 @@ class ProjectIndex:
         cands = self.functions.get(short) or []
         if not cands:
             return None
-        if method_call and (short in AMBIGUOUS_METHODS or len(cands) > 1 and len({c.ret_const for c in cands}) > 1 and not all(c.ret_params for c in cands)):
+        if method_call and (short in AMBIGUOUS_METHODS or len(cands) > 1 and len({const_key(c.ret_const) for c in cands}) > 1 and not all(c.ret_params for c in cands)):
             if short in AMBIGUOUS_METHODS:
                 return None
         if len(cands) == 1:
