@@ -1,6 +1,8 @@
 # Rempart scanning Rempart.
 # tests/, examples/ and the bench corpus hold intentionally vulnerable code: scanning them would only prove the tests work.
-exclude = ["tests/**", "examples/**", "src/rempart/corpus/bench/**"]
+# bench/realworld, bench/holdout, AUDIT.md and FIXES.md describe other repositories' findings and quote vulnerable
+# patterns on purpose. (A data rule firing on Markdown prose is itself a false positive, tracked as R4 in FIXES.md.)
+exclude = ["tests/**", "examples/**", "src/rempart/corpus/bench/**", "bench/realworld/**", "bench/holdout/**", "AUDIT.md", "FIXES.md"]
 
 [severity]
 # Scanner modules are flat rule tables (one `if` per check, no nesting). Cyclomatic
