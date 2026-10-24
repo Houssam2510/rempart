@@ -573,5 +573,46 @@ class F8McpBoundariesTest(IsolatedHome):
         self.assertEqual(m.allowed_roots(), [Path.cwd().resolve()])
 
 
+class F9SearchCannotHangTest(IsolatedHome):
+    def workspace(self, files):
+        from rempart.agent import Workspace
+        from rempart.engine import ScanResult
+
+        root = self.project("ws9", files)
+        return Workspace(ScanResult(root=str(root), findings=[], files_scanned=len(files), duration_s=0, scanners=[]), list(files))
+
+    def test_search_is_literal_by_default(self):
+        ws = self.workspace({"a.py": "x = a.b(c)\nOPS = 1\n"})
+        self.assertIn("a.py:1:", ws.search_code("a.b(c)", "*"))
+        self.assertEqual(ws.search_code("^OPS", "*"), "no matches")  # a regex anchor, taken literally
+        self.assertIn("a.py:2:", ws.search_code("^OPS", "*", regex=True))
+
+    def test_catastrophic_regex_times_out_instead_of_hanging(self):
+        import time
+
+        from rempart import agent
+
+        ws = self.workspace({"a.txt": "a" * 40 + "!\n"})
+        start = time.monotonic()
+        with self.assertRaises(ValueError) as ctx:
+            ws.search_code("(a+)+$", "*", regex=True)
+        self.assertLess(time.monotonic() - start, agent.REGEX_TIMEOUT + 5)
+        self.assertIn("timed out", str(ctx.exception))
+
+    def test_pattern_length_is_bounded(self):
+        from rempart import agent
+
+        ws = self.workspace({"a.txt": "x\n"})
+        with self.assertRaises(ValueError):
+            ws.search_code("a" * (agent.MAX_PATTERN + 1), "*")
+
+    def test_the_tool_schema_exposes_the_choice(self):
+        from rempart.agent import TOOLS
+
+        schema = next(t for t in TOOLS if t["name"] == "search_code")["input_schema"]
+        self.assertEqual(schema["properties"]["regex"]["type"], "boolean")
+        self.assertIn("regex", schema["required"])
+
+
 if __name__ == "__main__":
     unittest.main()

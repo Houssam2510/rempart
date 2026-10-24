@@ -102,8 +102,11 @@ TOOLS = [
           {"id": {"type": "string", "description": "Finding id (fingerprint prefix)."}}),
     _tool("read_file", "Read a line range of a repository file (1-based, inclusive, at most 400 lines). Lines are numbered.",
           {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}}),
-    _tool("search_code", "Search repository files with a Python regular expression. Returns up to 60 'path:line: text' matches.",
-          {"pattern": {"type": "string"}, "path_glob": {"type": "string", "description": "fnmatch glob such as 'src/**' or '*' for all files."}}),
+    _tool("search_code", "Search repository files. Literal text by default; set regex to true for a Python regular expression "
+          "(run with a time limit). Returns up to 60 'path:line: text' matches.",
+          {"pattern": {"type": "string", "description": "Text to find (at most 200 characters)."},
+           "path_glob": {"type": "string", "description": "fnmatch glob such as 'src/**' or '*' for all files."},
+           "regex": {"type": "boolean", "description": "true to treat pattern as a regular expression."}}),
     _tool("record_verdict", "Record your verdict for one finding. Call exactly once per finding.",
           {"id": {"type": "string"}, "verdict": {"type": "string", "enum": ["confirmed", "false_positive", "uncertain"]},
            "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
@@ -186,6 +189,39 @@ SENSITIVE_FILES = re.compile(
     r"|secrets?\.(?:ya?ml|json|toml|env)|service[-_]?account[^/]*\.json)$")
 
 
+MAX_PATTERN = 200
+REGEX_TIMEOUT = 5.0
+_REGEX_CHILD = """
+import json, re, sys
+job = json.load(sys.stdin)
+rx = re.compile(job["pattern"])
+hits = []
+for rel, lines in job["texts"]:
+    for i, line in enumerate(lines, 1):
+        if rx.search(line):
+            hits.append([rel, i])
+            if len(hits) > 60:
+                break
+    if len(hits) > 60:
+        break
+json.dump(hits, sys.stdout)
+"""
+
+
+def _regex_hits(pattern: str, texts: list[tuple[str, list[str]]]) -> list[tuple[str, int]]:
+    import subprocess
+    import sys
+
+    try:
+        proc = subprocess.run([sys.executable, "-I", "-c", _REGEX_CHILD], input=json.dumps({"pattern": pattern, "texts": texts}),
+                              capture_output=True, text=True, timeout=REGEX_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"regex timed out after {REGEX_TIMEOUT:g}s (catastrophic backtracking?); use a literal search or a simpler pattern") from exc
+    if proc.returncode != 0:
+        raise ValueError(f"regex search failed: {proc.stderr.strip()[-200:]}")
+    return [(rel, int(i)) for rel, i in json.loads(proc.stdout or "[]")]
+
+
 class Workspace:
     """The agent's only window on the repository: read and search, nothing else.
     Everything it returns passes through `mask_secrets` (AUDIT.md F5)."""
@@ -239,13 +275,19 @@ class Workspace:
         body = "\n".join(f"{i:>5}  {lines[i - 1]}" for i in range(start, end + 1))
         return f"<file path={path!r} lines={start}-{end} of {len(lines)}>\n{body}\n</file>"
 
-    def search_code(self, pattern: str, path_glob: str) -> str:
-        try:
-            rx = re.compile(pattern)
-        except re.error as exc:
-            raise ValueError(f"invalid regex: {exc}") from exc
+    def search_code(self, pattern: str, path_glob: str, regex: bool = False) -> str:
+        """Literal search by default. A regular expression (regex=True) is run in a child
+        process killed after REGEX_TIMEOUT seconds, so a catastrophic pattern written by the
+        model (or planted in the repository for it to copy) cannot hang the run."""
+        if not pattern or len(pattern) > MAX_PATTERN:
+            raise ValueError(f"pattern must be 1 to {MAX_PATTERN} characters")
+        if regex:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid regex: {exc}") from exc
         glob = path_glob or "*"
-        out: list[str] = []
+        texts: list[tuple[str, list[str]]] = []
         for rel in sorted(self.files):
             if glob not in ("*", "**") and not fnmatch.fnmatch(rel, glob):
                 continue
@@ -255,11 +297,12 @@ class Workspace:
                 continue
             if len(text) > 1_000_000:
                 continue
-            for i, line in enumerate(mask_secrets(text).splitlines(), 1):
-                if rx.search(line):
-                    out.append(f"{rel}:{i}: {line.strip()[:200]}")
-                    if len(out) >= 60:
-                        return "\n".join(out) + "\n(truncated at 60 matches)"
+            texts.append((rel, mask_secrets(text).splitlines()))
+        hits = _regex_hits(pattern, texts) if regex else [(rel, i) for rel, lines in texts for i, line in enumerate(lines, 1) if pattern in line][:61]
+        lines_of = dict(texts)
+        out = [f"{rel}:{i}: {lines_of[rel][i - 1].strip()[:200]}" for rel, i in hits[:60]]
+        if len(hits) > 60:
+            return "\n".join(out) + "\n(truncated at 60 matches)"
         return "\n".join(out) or "no matches"
 
 
@@ -292,7 +335,7 @@ class VerificationAgent:
             if name == "read_file":
                 return self.ws.read_file(str(args["path"]), int(args["start_line"]), int(args["end_line"])), False
             if name == "search_code":
-                return self.ws.search_code(str(args["pattern"]), str(args["path_glob"])), False
+                return self.ws.search_code(str(args["pattern"]), str(args["path_glob"]), bool(args.get("regex", False))), False
             if name == "record_verdict":
                 f = self.ws.resolve_id(str(args["id"]))
                 if f is None:

@@ -161,7 +161,7 @@ class WorkspaceTest(unittest.TestCase):
         for bad in ("../../etc/passwd", "/etc/passwd", "app.py/../../x", ".git/config"):
             with self.assertRaises(ValueError):
                 ws.read_file(bad, 1, 2)
-        self.assertIn("app.py:4:", ws.search_code(r"^OPS", "*.py"))
+        self.assertIn("app.py:4:", ws.search_code(r"^OPS", "*.py", regex=True))  # literal search is the default since F9
 
 
 if __name__ == "__main__":
