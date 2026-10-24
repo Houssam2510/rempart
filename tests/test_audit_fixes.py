@@ -677,6 +677,16 @@ class R2SafeResolutionTest(IsolatedHome):
         crit = [f for f in self.code_findings(files) if f.path == "views.py" and f.severity.name == "CRITICAL"]
         self.assertEqual(crit, [])
 
+    def test_a_project_escaper_keeps_its_declared_meaning(self):
+        # an escaper written character by character is beyond what the flow can prove; resolving
+        # it to the project's code must not turn every escaped value back into raw input
+        files = {
+            "text.py": "def escape_html(s):\n    out = ''\n    for c in s:\n        out += c if c.isalnum() else '&#%d;' % ord(c)\n    return out\n",
+            "views.py": "from flask import Flask, request\nimport text\n\napp = Flask(__name__)\n\n\n@app.post('/a')\n"
+                        "def a():\n    return '<p>' + text.escape_html(request.form['x']) + '</p>'\n",
+        }
+        self.assertEqual([f for f in self.code_findings(files) if f.rule.id == "CODE-XSS-SINK"], [])
+
     def test_a_unique_name_only_match_is_capped_and_says_so(self):
         files = {
             "cache.py": "class Cache:\n    def purge(self, key):\n        self.conn.execute('DELETE FROM cache WHERE k = ' + key)\n",

@@ -688,7 +688,13 @@ class FunctionFlow:
         learned = knowledge.active().categories_of(name, short)
         if learned and "*" in learned:
             learned = ALL_CATS
-        resolved = None if learned else self._resolve(node, name, short)
+        # an escaper's name is its author's statement, also when the project wrote it: a character-by-
+        # character escape is beyond what this flow can prove, so its body does not override the name
+        if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars") or learned:
+            cats = (SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())) | learned
+            base = join(*(taint_of(a) for a in args)) if args else CLEAN
+            return replace(base, clean=base.clean | cats, const=_NOCONST if not base.has_const() else base.const)
+        resolved = self._resolve(node, name, short)
         if resolved is not None and resolved[1]:
             # a certain resolution (this module, an import, the object's own class) is the project's
             # code and wins over name-based guesses below: Repo().find(k) is not str.find
@@ -702,10 +708,6 @@ class FunctionFlow:
                 recv is not None and "model" in recv.flags and short in ("first", "last", "get", "latest", "earliest", "filter", "exclude", "all", "order_by")):
             parts = [taint_of(a) for a in args] + [taint_of(v) for v in kwargs.values()]
             return Val(taint=join(*parts).taint if parts else frozenset(), flags=frozenset({"model"}))  # a model instance, not a URL
-        if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars") or learned:
-            cats = (SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())) | learned
-            base = join(*(taint_of(a) for a in args)) if args else CLEAN
-            return replace(base, clean=base.clean | cats, const=_NOCONST if not base.has_const() else base.const)
         if short in NON_HTML_RESPONSES:
             return CLEAN  # a file, JSON or error response: the value is not written into HTML
         if name in NEUTRALIZERS or (isinstance(node.func, ast.Attribute) and short in ("isdigit", "isalnum", "isnumeric", "startswith", "endswith", "count", "find", "index")):
