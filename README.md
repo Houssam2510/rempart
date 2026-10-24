@@ -194,6 +194,8 @@ It uses the newest Opus-tier model available to your key, or the one set with `-
 - 🧱 Repository content is declared untrusted, a defence against prompt injection planted in comments or READMEs.
 - ⏱️ The loop is bounded, and server-side refusal fallback keeps a declined request from aborting the run.
 - ⚖️ Its verdicts never delete a finding. They count half in calibration and never override yours.
+- 🧯 Before anything reaches the API, secrets are masked and credential files (`.env*`, keys, `*.tfstate`…) are never read ([SECURITY.md](SECURITY.md)).
+- 🚧 `--apply` never writes CI files, Dockerfiles, lockfiles or `package.json` scripts (`--allow-sensitive-paths` to override). Proof tests are checked statically before they are saved (no network, no subprocess, no writes outside a temporary directory) and start with a warning header; a proof that fails the check is refused and never written.
 
 It is tested against the real Anthropic Python SDK through a mocked HTTP transport, asserting the exact request bodies.
 

@@ -159,6 +159,7 @@ class AgentReport:
     verdicts: dict[str, Verdict] = field(default_factory=dict)
     fixes: list[Fix] = field(default_factory=list)
     proofs: list[Proof] = field(default_factory=list)
+    refused_fixes: list[tuple[Fix, str]] = field(default_factory=list)  # (fix, reason) kept out of --apply
     summary: str = ""
     turns: int = 0
     input_tokens: int = 0
@@ -324,6 +325,10 @@ class VerificationAgent:
                 filename = os.path.basename(str(args["filename"]).strip())
                 if not re.fullmatch(r"[\w.\-]{1,80}", filename) or filename.startswith("."):
                     raise ValueError("filename must be a plain file name such as test_proof_x.py")
+                unsafe = check_proof(filename, str(args["content"]))
+                if unsafe:
+                    raise ValueError("proof refused: " + "; ".join(unsafe) + ". Mock side effects by name (mock.patch('module.subprocess.run')) "
+                                     "and write only under tmp_path.")
                 self.report.proofs.append(Proof(f.fingerprint, filename, str(args["content"]), str(args["run_with"])))
                 return "proof saved for review (not executed)", False
             if name == "finish":
@@ -450,15 +455,124 @@ def render_report_md(report: AgentReport, findings: list[Finding], root: Path) -
     return "\n".join(lines)
 
 
-def apply_fixes(report: AgentReport, root: Path) -> list[str]:
+# ------------------------------------------------------------------ what agent output may touch (AUDIT.md F6)
+# The agent's text is shaped by repository content, which may carry injected instructions.
+# Its fixes are never written into files that run code at build, install or CI time, and
+# its proof tests must not reach the network, start processes or write outside a temporary
+# directory. A person can still apply such a fix by hand from rempart-fixes.patch.
+
+_CI_PATHS = re.compile(r"(?i)(?:^|/)(?:\.github/|\.circleci/|\.buildkite/|\.gitlab-ci\.ya?ml$|jenkinsfile$|azure-pipelines\.ya?ml$"
+                       r"|bitbucket-pipelines\.ya?ml$|\.travis\.ya?ml$|\.drone\.ya?ml$|cloudbuild\.ya?ml$)")
+_BUILD_FILES = re.compile(r"(?i)(?:^|/)(?:dockerfile[^/]*|[^/]*\.dockerfile|containerfile)$")
+_LOCKFILES = {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock", "poetry.lock", "Pipfile.lock",
+              "uv.lock", "Cargo.lock", "Gemfile.lock", "composer.lock", "go.sum", "gradle.lockfile", "packages.lock.json", "mix.lock"}
+
+
+def protected_reason(path: str, before: str, after: str) -> str | None:
+    """Why a fix to `path` must not be applied automatically, or None."""
+    name = path.rsplit("/", 1)[-1]
+    if _CI_PATHS.search(path):
+        return "CI configuration"
+    if _BUILD_FILES.search(path):
+        return "container build file"
+    if name in _LOCKFILES:
+        return "dependency lockfile"
+    if name == "package.json":
+        try:
+            if (json.loads(before) or {}).get("scripts") != (json.loads(after) or {}).get("scripts"):
+                return "package.json scripts (run at install time)"
+        except (ValueError, AttributeError):
+            return "package.json that cannot be parsed after the change"
+    return None
+
+
+def apply_fixes(report: AgentReport, root: Path, allow_sensitive: bool = False) -> list[str]:
+    """Write the proposed fixes; those touching CI, build, lock or install-script files
+    are refused (kept in report.refused_fixes) unless `allow_sensitive`."""
     changed = []
     for fix in report.fixes:
         p = root / fix.path
         text = p.read_text(encoding="utf-8")
-        if text.count(fix.find) == 1:
-            p.write_text(text.replace(fix.find, fix.replace, 1), encoding="utf-8")
-            changed.append(fix.path)
+        if text.count(fix.find) != 1:
+            continue
+        after = text.replace(fix.find, fix.replace, 1)
+        reason = protected_reason(fix.path, text, after)
+        if reason and not allow_sensitive:
+            report.refused_fixes.append((fix, reason))
+            continue
+        p.write_text(after, encoding="utf-8")
+        changed.append(fix.path)
     return changed
+
+
+_NET_OR_PROCESS_MODULES = {"socket", "ssl", "requests", "httpx", "urllib", "urllib3", "http", "aiohttp", "ftplib", "smtplib", "telnetlib",
+                           "paramiko", "asyncssh", "subprocess", "pty", "ctypes", "importlib", "webbrowser", "multiprocessing"}
+_FORBIDDEN_CALLS = re.compile(r"^(?:os\.(?:system|popen|exec\w*|spawn\w*|posix_spawn\w*|fork\w*|kill\w*|remove|unlink|rmdir|removedirs|rename|replace)"
+                              r"|shutil\.(?:rmtree|move|copy\w*)|__import__|eval|exec|compile)$")
+_JS_FORBIDDEN = re.compile(r"child_process|require\(\s*['\"](?:net|http|https|http2|dgram|tls|dns)['\"]\s*\)|from\s+['\"](?:node:)?(?:net|http|https|http2|dgram|tls|dns|child_process)['\"]"
+                           r"|\bfetch\s*\(|\baxios\b|XMLHttpRequest|WebSocket|\beval\s*\(|new\s+Function\s*\(|process\.binding")
+_JS_FS_WRITE = re.compile(r"\b(?:writeFile|appendFile|rm|rmSync|rmdir|unlink|rename|copyFile|createWriteStream)\w*\s*\(")
+_TMP = re.compile(r"(?i)tmp|temp")
+
+
+def _dotted_name(node: Any) -> str:
+    import ast
+
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted_name(node.value)}.{node.attr}"
+    return ""
+
+
+def check_proof(filename: str, content: str) -> list[str]:
+    """Reasons a proof test is unsafe to hand to a developer; empty when it passes.
+    Python is checked on its syntax tree, JavaScript/TypeScript by pattern; other
+    languages are refused because they cannot be checked."""
+    import ast
+
+    reasons: list[str] = []
+    if filename.endswith(".py"):
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as exc:
+            return [f"not valid Python: {exc.msg}"]
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                mods = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+                for m in mods:
+                    if m.split(".")[0] in _NET_OR_PROCESS_MODULES:
+                        reasons.append(f"imports {m} (network or process access)")
+                if isinstance(node, ast.ImportFrom) and node.module == "os":
+                    bad = [a.name for a in node.names if _FORBIDDEN_CALLS.match(f"os.{a.name}")]
+                    if bad:
+                        reasons.append(f"imports os.{', os.'.join(bad)}")
+            elif isinstance(node, ast.Call):
+                name = _dotted_name(node.func)
+                if _FORBIDDEN_CALLS.match(name):
+                    reasons.append(f"calls {name}()")
+                elif name == "open" or name.endswith(".open"):
+                    mode = node.args[1] if len(node.args) > 1 else next((k.value for k in node.keywords if k.arg == "mode"), None)
+                    target = ast.unparse(node.args[0]) if node.args else ""
+                    if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and set(mode.value) & set("wax+") and not _TMP.search(target):
+                        reasons.append(f"writes outside a temporary directory: open({target}, {mode.value!r})")
+                elif isinstance(node.func, ast.Attribute) and node.func.attr in ("write_text", "write_bytes", "unlink", "rmdir", "rename", "replace", "touch"):
+                    target = ast.unparse(node.func.value)
+                    if not _TMP.search(target):
+                        reasons.append(f"writes outside a temporary directory: {target}.{node.func.attr}()")
+    elif filename.endswith((".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx")):
+        for i, line in enumerate(content.splitlines(), 1):
+            if m := _JS_FORBIDDEN.search(line):
+                reasons.append(f"line {i}: {m.group(0)} (network, process or dynamic code)")
+            if _JS_FS_WRITE.search(line) and not _TMP.search(line):
+                reasons.append(f"line {i}: file-system write outside a temporary directory")
+    else:
+        reasons.append("only Python and JavaScript/TypeScript proofs can be checked; others are not written")
+    return sorted(set(reasons))
+
+
+PROOF_WARNING = ("WARNING: written by `rempart agent` from untrusted repository content. Read it before running it. Rempart checked it "
+                 "statically (no network, no subprocess, no writes outside a temporary directory) but never ran it.")
 
 
 def write_proofs(report: AgentReport, findings: list[Finding], out_dir: Path) -> list[Path]:
@@ -472,8 +586,11 @@ def write_proofs(report: AgentReport, findings: list[Finding], out_dir: Path) ->
              "Written by `rempart agent` for findings it confirmed. Rempart never runs them: read each one, then run it yourself.",
              "Each test should pass on the vulnerable code and fail once the fix is applied.", ""]
     for proof in report.proofs:
+        if check_proof(proof.filename, proof.content):
+            continue  # refused when the agent wrote it; checked again here in case the report was built elsewhere
         target = out_dir / proof.filename
-        target.write_text(proof.content, encoding="utf-8")
+        comment = "#" if proof.filename.endswith(".py") else "//"
+        target.write_text(f"{comment} {PROOF_WARNING}\n\n{proof.content}", encoding="utf-8")
         written.append(target)
         f = by_id.get(proof.finding_id)
         where = f"{f.rule.id} at {f.path}:{f.line}" if f else proof.finding_id[:10]

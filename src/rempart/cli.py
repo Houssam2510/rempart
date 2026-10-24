@@ -387,8 +387,11 @@ def cmd_agent(args: argparse.Namespace) -> int:
     if proposals:
         print("\nThe agent proposes sanitisers to learn (review, then `rempart learn --accept-proposals`):\n  " + "\n  ".join(proposals))
     if args.apply and report.fixes:
-        changed = apply_fixes(report, root)
-        print(f"Applied fixes to: {', '.join(changed)}. Review with `git diff` before committing.")
+        changed = apply_fixes(report, root, allow_sensitive=args.allow_sensitive_paths)
+        for fix, reason in report.refused_fixes:
+            print(f"Not applied: {fix.path} ({reason}). Review it in {args.patch}, or rerun with --allow-sensitive-paths.")
+        if changed:
+            print(f"Applied fixes to: {', '.join(changed)}. Review with `git diff` before committing.")
     return 0
 
 
@@ -703,6 +706,8 @@ def build_parser() -> argparse.ArgumentParser:
     ag.add_argument("--report", default="rempart-agent-report.md")
     ag.add_argument("--patch", default="rempart-fixes.patch")
     ag.add_argument("--apply", action="store_true", help="write the proposed fixes to the files (review with git diff)")
+    ag.add_argument("--allow-sensitive-paths", action="store_true",
+                    help="let --apply also change CI files, Dockerfiles, lockfiles and package.json scripts (refused by default)")
     ag.add_argument("--limit", type=int, default=40)
     ag.set_defaults(func=cmd_agent)
 
