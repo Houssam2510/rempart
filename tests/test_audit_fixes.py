@@ -1124,6 +1124,55 @@ def search():
         self.assertEqual(found, [4])
 
 
+class R7TerraformValuesTest(IsolatedHome):
+    def findings(self, files):
+        from rempart.config import Config
+        from rempart.engine import run_scan
+        from rempart.scanners import ALL_SCANNERS
+
+        root = self.project(f"r7-{len(list(self.tmp.iterdir()))}", files)
+        return run_scan(root, [ALL_SCANNERS["terraform"]], Config(), offline=True, correlate=False).findings
+
+    def imds(self, files):
+        return {f.path: (f.severity.name, f.message) for f in self.findings(files) if f.rule.id == "TF-EC2-IMDSV1"}
+
+    INSTANCE = 'resource "aws_instance" "a" {{\n  ami = "ami-1"\n{body}}}\n'
+
+    def test_imds_disabled_entirely_is_not_imdsv1(self):
+        tf = self.INSTANCE.format(body='  metadata_options {\n    http_endpoint = "disabled"\n  }\n')
+        self.assertEqual(self.imds({"main.tf": tf}), {})
+
+    def test_dynamic_block_resolved_from_the_variable_default(self):
+        dynamic = ('  dynamic "metadata_options" {\n    for_each = [var.metadata_options]\n    content {\n'
+                   '      http_endpoint = metadata_options.value.http_endpoint\n      http_tokens   = metadata_options.value.http_tokens\n    }\n  }\n')
+        tf = 'resource "aws_launch_template" "this" {\n  name = "x"\n' + dynamic + '}\n'
+        by_default = ('variable "metadata_options" {\n  type = object({\n    http_endpoint = optional(string, "enabled")\n'
+                      '    http_tokens   = optional(string, "required")\n  })\n  default = {\n    http_endpoint = "enabled"\n'
+                      '    http_tokens   = "required"\n  }\n}\n')
+        self.assertEqual(self.imds({"main.tf": tf, "variables.tf": by_default}), {})
+        by_type = 'variable "metadata_options" {\n  type = object({\n    http_tokens = optional(string, "required")\n  })\n  default = {}\n}\n'
+        self.assertEqual(self.imds({"main.tf": tf, "variables.tf": by_type}), {})
+        optional = by_default.replace('http_tokens   = "required"', 'http_tokens   = "optional"')
+        self.assertEqual(self.imds({"main.tf": tf, "variables.tf": optional})["main.tf"][0], "HIGH")
+
+    def test_locals_and_variables_resolve_and_unresolved_values_are_never_high(self):
+        local = 'locals {\n  imds = "optional"\n}\n' + self.INSTANCE.format(body='  metadata_options {\n    http_tokens = local.imds\n  }\n')
+        self.assertEqual(self.imds({"main.tf": local})["main.tf"][0], "HIGH")
+        unknown = 'variable "tokens" {\n  type = string\n}\n' + self.INSTANCE.format(body='  metadata_options {\n    http_tokens = var.tokens\n  }\n')
+        sev, msg = self.imds({"main.tf": unknown})["main.tf"]
+        self.assertEqual(sev, "MEDIUM")
+        self.assertIn("not resolved", msg)
+
+    def test_network_rule_with_a_cidr_variable(self):
+        sg = ('resource "aws_security_group" "admin" {\n  ingress {\n    from_port = 22\n    to_port = 22\n    protocol = "tcp"\n'
+              '    cidr_blocks = [var.admin_cidr]\n  }\n}\n')
+        world = 'variable "admin_cidr" {\n  default = "0.0.0.0/0"\n}\n'
+        private = 'variable "admin_cidr" {\n  default = "10.0.0.0/8"\n}\n'
+        ids = lambda files: {f.rule.id for f in self.findings(files)}
+        self.assertIn("TF-NET-ADMIN-PORT-OPEN", ids({"sg.tf": sg, "variables.tf": world}))
+        self.assertNotIn("TF-NET-ADMIN-PORT-OPEN", ids({"sg.tf": sg, "variables.tf": private}))
+
+
 
 if __name__ == "__main__":
     unittest.main()

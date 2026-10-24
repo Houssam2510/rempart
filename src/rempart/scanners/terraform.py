@@ -5,16 +5,24 @@ looks at one resource body, which is all these rules need. Rules target the
 misconfigurations that dominate real cloud incidents: public storage,
 internet-exposed admin and database ports, wildcard IAM, unencrypted data
 stores, IMDSv1 (the SSRF-to-credentials path), and missing audit trails.
+
+Values (AUDIT.md R7): before the checks run, `var.x`, `local.x` and, inside a
+`dynamic` block, `<iterator>.value.x` are replaced by their value when it is known
+in simple cases: a variable's default (merged over `optional(type, default)` in its
+object type) or a committed terraform.tfvars / *.auto.tfvars value in the same
+directory, a local that is a literal or one of these, `[ref]`, `ref.attr` and
+`lookup(ref, "key", default)`. A check that still reads an unresolved value says so
+and is capped at MEDIUM with confidence 0.5: an unknown value is never a HIGH.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterator
 
 from rempart.engine import ScanContext, line_of
-from rempart.models import Finding, Rule
+from rempart.models import Finding, Rule, Severity
 from rempart.registry import A01, A02, A04, A07, A08, A09, C, H, L, M, rule
 
 CIS = "CIS AWS Foundations"
@@ -97,9 +105,10 @@ class Block:
     name: str
     body: str
     offset: int
+    unresolved: dict = field(default_factory=dict)
 
 
-_HEAD = re.compile(r'^\s*(resource|data|provider|terraform|module)\s*(?:"([^"]+)")?\s*(?:"([^"]+)")?\s*\{', re.M)
+_HEAD = re.compile(r'^\s*(resource|data|provider|terraform|module|variable|locals)\s*(?:"([^"]+)")?\s*(?:"([^"]+)")?\s*\{', re.M)
 
 
 def blocks(text: str) -> Iterator[Block]:
@@ -126,6 +135,220 @@ def blocks(text: str) -> Iterator[Block]:
             i += 1
         # m.start(1), not m.start(): the leading \s* also matches blank lines above the block
         yield Block(m.group(1), m.group(2) or "", m.group(3) or "", text[m.end():i - 1], m.start(1))
+
+
+def _close(text: str, i: int) -> int:
+    """Index just past the bracket matching the one opened before `i` (strings skipped)."""
+    depth, n, in_str = 1, len(text), False
+    while i < n and depth:
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 1
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return i
+
+
+_ASSIGN = re.compile(r"(?m)^[ \t]*([\w-]+)[ \t]*=[ \t]*")
+_REF = re.compile(r"\b(?:var|local)\.[\w-]+|\b[\w-]+\.value\b")
+UNRESOLVED = object()
+
+
+def assignments(body: str) -> dict[str, str]:
+    """Top-level `key = expression` of a block body; a multi-line {...} / [...] value is kept whole."""
+    out: dict[str, str] = {}
+    pos, depth_at = 0, 0
+    for m in _ASSIGN.finditer(body):
+        if m.start() < pos:
+            continue
+        # skip assignments nested in sub-blocks
+        depth_at = body.count("{", 0, m.start()) - body.count("}", 0, m.start())
+        if depth_at:
+            continue
+        end, depth, in_str = m.end(), 0, False
+        # the value runs to the end of the line, or further while a bracket is open
+        while end < len(body) and (depth or body[end] != "\n"):
+            ch = body[end]
+            if in_str:
+                in_str = ch != '"' or body[end - 1] == "\\"
+            elif ch == '"':
+                in_str = True
+            elif ch in "{[(":
+                depth += 1
+            elif ch in "}])":
+                depth -= 1
+            end += 1
+        out[m.group(1)] = body[m.end():end].strip()
+        pos = end
+    return out
+
+
+def _split(inner: str) -> list[str]:
+    parts, depth, cur, in_str = [], 0, "", False
+    for ch in inner:
+        if in_str:
+            in_str = ch != '"'
+        elif ch == '"':
+            in_str = True
+        elif ch in "[{(":
+            depth += 1
+        elif ch in "]})":
+            depth -= 1
+        elif ch in ",\n" and not depth:
+            parts.append(cur)
+            cur = ""
+            continue
+        cur += ch
+    return [p.strip() for p in parts + [cur] if p.strip()]
+
+
+def literal(expr: str):
+    """A literal HCL value as Python (str, list, dict), or UNRESOLVED."""
+    e = expr.strip()
+    if re.fullmatch(r'"(?:[^"\\$]|\\.|\$(?!\{))*"', e):
+        return e[1:-1]
+    if re.fullmatch(r"true|false|null|-?\d+(?:\.\d+)?", e):
+        return None if e == "null" else e
+    if e.startswith("[") and e.endswith("]"):
+        items = [literal(x) for x in _split(e[1:-1])]
+        return UNRESOLVED if UNRESOLVED in items else items
+    if e.startswith("{") and e.endswith("}"):
+        pairs = [re.match(r'\s*"?([\w-]+)"?\s*[=:]\s*(.*)', p, re.S) for p in _split(e[1:-1])]
+        if None in pairs:
+            return UNRESOLVED
+        obj = {m.group(1): literal(m.group(2)) for m in pairs}
+        return UNRESOLVED if UNRESOLVED in obj.values() else obj
+    return UNRESOLVED
+
+
+class Values:
+    """Variables and locals of one Terraform directory (one module)."""
+
+    def __init__(self, texts: list[str], tfvars: list[str] = ()):
+        self.vars: dict[str, object] = {}
+        self.local_exprs: dict[str, str] = {}
+        for text in texts:
+            for b in blocks(text):
+                if b.kind == "variable" and b.type:
+                    self.vars[b.type] = self._variable(b.body)
+                elif b.kind == "locals":
+                    self.local_exprs.update(assignments(b.body))
+        for text in tfvars:
+            for k, v in assignments(text).items():
+                value = literal(v)
+                if value is not UNRESOLVED:
+                    self.vars[k] = value
+        self.locals: dict[str, object] = {}
+
+    @staticmethod
+    def _variable(body: str):
+        a = assignments(body)
+        defaults = {m.group(1): literal(m.group(2)) for m in re.finditer(r'([\w-]+)\s*=\s*optional\(\s*\w+\s*,\s*("[^"]*"|\w+)\s*\)', a.get("type", ""))}
+        if "default" not in a:
+            return UNRESOLVED
+        value = literal(a["default"])
+        if isinstance(value, dict) and defaults:
+            return {**defaults, **{k: v for k, v in value.items() if v is not None}}
+        if value is None and defaults:
+            return UNRESOLVED
+        return value
+
+    def resolve(self, expr: str, env: dict[str, object] | None = None, depth: int = 0):
+        e = expr.strip()
+        if depth > 8:
+            return UNRESOLVED
+        value = literal(e)
+        if value is not UNRESOLVED:
+            return value
+        m = re.fullmatch(r"lookup\((.+?),\s*(\"[^\"]+\")\s*(?:,\s*(.+))?\)", e)
+        if m:
+            obj, key = self.resolve(m.group(1), env, depth + 1), m.group(2)[1:-1]
+            if isinstance(obj, dict):
+                if obj.get(key) is not None:
+                    return obj[key]
+                return self.resolve(m.group(3), env, depth + 1) if m.group(3) else UNRESOLVED
+            return UNRESOLVED
+        if re.fullmatch(r'"[^"]*"', e) and "${" in e:
+            # "${...}" interpolation: known only when every placeholder is
+            parts = [self.resolve(x, env, depth + 1) for x in re.findall(r"\$\{([^}]*)\}", e)]
+            if not all(isinstance(x, str) for x in parts):
+                return UNRESOLVED
+            it = iter(parts)
+            return re.sub(r"\$\{[^}]*\}", lambda _: next(it), e[1:-1])
+        if e.startswith("[") and e.endswith("]"):
+            items = [self.resolve(x, env, depth + 1) for x in _split(e[1:-1])]
+            return UNRESOLVED if UNRESOLVED in items else items
+        m = re.fullmatch(r"(var|local|[\w-]+)\.([\w-]+)((?:\.[\w-]+|\[\"[^\"]+\"\])*)", e)
+        if not m:
+            return UNRESOLVED
+        head, name, rest = m.groups()
+        if head == "var":
+            value = self.vars.get(name, UNRESOLVED)
+        elif head == "local":
+            if name not in self.locals:
+                self.locals[name] = UNRESOLVED  # a cycle stays unresolved
+                self.locals[name] = self.resolve(self.local_exprs[name], None, depth + 1) if name in self.local_exprs else UNRESOLVED
+            value = self.locals[name]
+        elif env is not None and name == "value" and head in env:
+            value = env[head]
+        else:
+            return UNRESOLVED
+        for key in re.findall(r'\.([\w-]+)|\["([^"]+)"\]', rest):
+            key = key[0] or key[1]
+            value = value.get(key, UNRESOLVED) if isinstance(value, dict) else UNRESOLVED
+        return UNRESOLVED if value is None and rest else value
+
+    def substitute(self, body: str, env: dict[str, object] | None = None) -> tuple[str, dict[str, str]]:
+        """The body with every resolvable reference written as a literal, and the
+        attributes left with an unresolved reference (name -> expression)."""
+        out, unresolved, i = [], {}, 0
+        for d in re.finditer(r'dynamic\s+"([\w-]+)"\s*\{', body):
+            if d.start() < i:
+                continue
+            end = _close(body, d.end())
+            inner = body[d.end():end - 1]
+            a = assignments(inner)
+            iterator = (a.get("iterator") or d.group(1)).strip()
+            items = self.resolve(a.get("for_each", ""), env)
+            scope = dict(env or {})
+            if isinstance(items, list) and len(items) == 1:
+                scope[iterator] = items[0]
+            elif isinstance(items, dict) and items and all(isinstance(v, dict) for v in items.values()) and len(items) == 1:
+                scope[iterator] = next(iter(items.values()))
+            done, more = self.substitute(inner, scope)
+            unresolved.update(more)
+            plain, top = self._line_values(body[i:d.start()], env)
+            out += [plain, body[d.start():d.end()], done, "}"]
+            unresolved.update(top)
+            i = end
+        plain, top = self._line_values(body[i:], env)
+        unresolved.update(top)
+        return "".join(out) + plain, unresolved
+
+    def _line_values(self, text: str, env) -> tuple[str, dict[str, str]]:
+        unresolved: dict[str, str] = {}
+
+        def one(m: re.Match) -> str:
+            key, expr = m.group(2), m.group(3)
+            if not _REF.search(expr):
+                return m.group(0)
+            value = self.resolve(expr, env)
+            if isinstance(value, str):
+                return f'{m.group(1)}"{value}"'
+            if isinstance(value, list) and all(isinstance(v, str) for v in value):
+                return m.group(1) + "[" + ", ".join(f'"{v}"' for v in value) + "]"
+            unresolved[key] = expr.strip()
+            return m.group(0)
+
+        return re.sub(r"(?m)^([ \t]*([\w-]+)[ \t]*=[ \t]*)([^\n{]*\S)[ \t]*$", one, text), unresolved
 
 
 def attr(body: str, name: str) -> str | None:
@@ -168,6 +391,15 @@ class TerraformScanner:
     name = "terraform"
 
     def scan(self, ctx: ScanContext) -> Iterator[Finding]:
+        by_dir: dict[str, list[str]] = {}
+        for rel in ctx.files:
+            if rel.lower().endswith(".tf"):
+                by_dir.setdefault(rel.rpartition("/")[0], []).append(rel)
+        values: dict[str, Values] = {}
+        for d, rels in by_dir.items():
+            tfvars = [ctx.text(f) or "" for f in ctx.files if f.rpartition("/")[0] == d
+                      and (f.rsplit("/", 1)[-1] == "terraform.tfvars" or f.endswith(".auto.tfvars"))]
+            values[d] = Values([ctx.text(f) or "" for f in rels], tfvars)
         for rel in ctx.files:
             low = rel.lower()
             if low.endswith((".tfstate", ".tfstate.backup")) and ctx.is_committed(rel):
@@ -179,10 +411,15 @@ class TerraformScanner:
             elif low.endswith(".tf"):
                 text = ctx.text(rel)
                 if text:
-                    yield from self.file(rel, text)
+                    yield from self.file(rel, text, values.get(rel.rpartition("/")[0]))
 
-    def file(self, rel: str, text: str) -> Iterator[Finding]:
-        resources = list(blocks(text))
+    def file(self, rel: str, text: str, values: Values | None = None) -> Iterator[Finding]:
+        values = values or Values([text])
+        resources = []
+        for b in blocks(text):
+            if b.kind in ("resource", "data"):
+                b.body, b.unresolved = values.substitute(b.body)
+            resources.append(b)
         bucket_names = {b.name for b in resources if b.type == "aws_s3_bucket"}
         pab_targets = " ".join(b.body for b in resources if b.type == "aws_s3_bucket_public_access_block")
         for b in resources:
@@ -192,6 +429,13 @@ class TerraformScanner:
                 f = Finding(rule_, rel, ln, f"{b.type}.{b.name}: {msg}" if b.name else msg, snippet=f'{b.kind} "{b.type}" "{b.name}"'.strip())
                 if sev is not None:
                     f.severity = sev
+                # a check that read a value Terraform only knows at plan time cannot be sure
+                unknown = [f"{k} = {v}" for k, v in b.unresolved.items() if re.search(rf"(?<![\w-]){re.escape(k)}(?![\w-])", msg)]
+                if unknown:
+                    f.severity = min(f.severity, Severity.MEDIUM)
+                    f.confidence = min(f.confidence, 0.5)
+                    f.message += f" Value not resolved ({'; '.join(unknown)})."
+                    f.extra["resolution"] = "unresolved"
                 return f
 
             body, t = b.body, b.type
@@ -260,8 +504,10 @@ class TerraformScanner:
             if t in ("aws_sqs_queue", "aws_sns_topic") and not (attr(body, "kms_master_key_id") or is_true(attr(body, "sqs_managed_sse_enabled"))):
                 yield F(R_DB_UNENCRYPTED, "no server-side encryption.", sev=L)
             # --- compute / functions / k8s
-            if t in ("aws_instance", "aws_launch_template") and not re.search(r'http_tokens\s*=\s*"required"', body):
-                yield F(R_IMDS, "metadata_options.http_tokens is not \"required\".")
+            if t in ("aws_instance", "aws_launch_template") and not re.search(r'http_tokens\s*=\s*"required"', body) \
+                    and not re.search(r'http_endpoint\s*=\s*"disabled"', body):
+                # with http_endpoint = "disabled" there is no metadata service to reach at all
+                yield F(R_IMDS, "metadata_options.http_tokens is not \"required\"" + (" and http_endpoint is not \"disabled\"" if "http_endpoint" in b.unresolved else "") + ".")
             if t in ("aws_instance", "aws_launch_template") and re.search(r"(?:root_block_device|ebs_block_device|ebs)\s*\{[^}]*encrypted\s*=\s*false", body):
                 yield F(R_DB_UNENCRYPTED, "block device with encrypted = false.")
             if t == "aws_lambda_function_url" and attr(body, "authorization_type") == "NONE":
