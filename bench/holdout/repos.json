@@ -1,0 +1,10 @@
+{
+  "description": "Held-out control set. Pinned on 2026-10-24 without cloning or reading the code (git ls-remote only). Do not scan or look at these repositories while fixing; they are scanned once, at the end, and labelled by hand with the audit's method. Nothing may be fixed from their results.",
+  "repos": [
+    {"name": "CTFd", "url": "https://github.com/CTFd/CTFd.git", "commit": "a751d1773df7f16341801831481eeb7b1ded18c2", "stack": "Flask"},
+    {"name": "full-stack-fastapi-template", "url": "https://github.com/fastapi/full-stack-fastapi-template.git", "commit": "b1125d8839482cb7bbae603ddc6d0081bf87532e", "stack": "FastAPI, React, Docker Compose"},
+    {"name": "node-express-boilerplate", "url": "https://github.com/hagopj13/node-express-boilerplate.git", "commit": "179ae84efec61b14206d0305d941daed6c6d07f9", "stack": "Express"},
+    {"name": "terraform-aws-rds", "url": "https://github.com/cloudposse/terraform-aws-rds.git", "commit": "0ea40fa3592093c588fffec1cada3ada9b99bce9", "stack": "Terraform AWS"},
+    {"name": "podinfo", "url": "https://github.com/stefanprodan/podinfo.git", "commit": "3e0ff8ae123b710bc91de1315cba0f996a8896c2", "stack": "Kubernetes, Helm, GitHub Actions, Go"}
+  ]
+}
