@@ -1,0 +1,13 @@
+{
+  "description": "Public repositories of the adversarial audit (AUDIT.md, section 3), pinned. Precision is measured on the top 10 critical/high findings of each, against labels/labels.json.",
+  "repos": [
+    {"name": "microblog", "url": "https://github.com/miguelgrinberg/microblog.git", "commit": "a975ef64864354867c88e0ed3a17ba7d17dca752", "stack": "Flask"},
+    {"name": "djangoproject.com", "url": "https://github.com/django/djangoproject.com.git", "commit": "2f3a10a91b684d218851fa6e8b667b9a50b834df", "stack": "Django"},
+    {"name": "commerce", "url": "https://github.com/vercel/commerce.git", "commit": "f7521d57d29f0eb3d23c1399cf9bb299d61fcd21", "stack": "Next.js"},
+    {"name": "terraform-aws-eks", "url": "https://github.com/terraform-aws-modules/terraform-aws-eks.git", "commit": "91b8a8d944e3cf169483108acd12d5b1e47856f7", "stack": "Terraform AWS"},
+    {"name": "microservices-demo", "url": "https://github.com/GoogleCloudPlatform/microservices-demo.git", "commit": "38e7348eb289eb5b87c0c6e8cb19ced0449dc389", "stack": "Kubernetes, GitHub Actions, Go, Python"}
+  ],
+  "stress": [
+    {"name": "django", "url": "https://github.com/django/django.git", "commit": "0e128d524d0a7c55a955570d6e5da983ac6ce6c7", "stack": "large Python codebase: time and crashes only, no labels"}
+  ]
+}

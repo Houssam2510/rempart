@@ -1,0 +1,214 @@
+{
+ "protocol": "AUDIT.md section 3: each critical/high finding in the top 10 by risk, labelled by reading the code. tp = real issue, fp = wrong, debatable = true statement of low value or mitigated.",
+ "labelled_at": "72eb339",
+ "labels": [
+  {
+   "repo": "microblog",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "app/auth/routes.py",
+   "line": 29,
+   "label": "debatable",
+   "reason": "Guarded by urlsplit(next_page).netloc != '' (not recognised); backslash bypass only theoretical."
+  },
+  {
+   "repo": "microblog",
+   "rule": "CODE-SSRF",
+   "path": "app/main/routes.py",
+   "line": 160,
+   "label": "fp",
+   "reason": "Host is a constant; only the language query parameters come from the request."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CHAIN-DEBUG-CONSOLE-EXPOSED",
+   "path": "djangoproject/settings/dev.py",
+   "line": 12,
+   "label": "fp",
+   "reason": "Links DEBUG of settings/dev.py to a compose that runs settings.docker; Django has no Werkzeug console."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CHAIN-XSS-SESSION-THEFT",
+   "path": "docs/templatetags/docs.py",
+   "line": 86,
+   "label": "fp",
+   "reason": "mark_safe(highlight()) on trusted docs; narrative claims localStorage tokens that do not exist (the link is a dev-settings cookie)."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-PATH-TRAVERSAL",
+   "path": "docs/views.py",
+   "line": 35,
+   "label": "fp",
+   "reason": "path.replace(version, ...) is a string method, not a file access."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "docs/views.py",
+   "line": 35,
+   "label": "fp",
+   "reason": "Redirect to the request's own path on the same host."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "docs/views.py",
+   "line": 132,
+   "label": "fp",
+   "reason": "reverse() plus a query string: the host cannot change."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "docs/views.py",
+   "line": 172,
+   "label": "fp",
+   "reason": "Redirect to a model object."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-EVAL",
+   "path": "djangoproject/static/js/lib/require.js",
+   "line": 36,
+   "label": "fp",
+   "reason": "Vendored, minified third-party library."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "COMPOSE-SECRET-LITERAL",
+   "path": "docker-compose.yml",
+   "line": 16,
+   "label": "debatable",
+   "reason": "SECRET_KEY=foo in the development compose file."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "DATA-SQL-LITERAL-PASSWORD",
+   "path": "docker-entrypoint-initdb.d/01_trac_db.sql",
+   "line": 2,
+   "label": "fp",
+   "reason": "'secret' in a local database init script."
+  },
+  {
+   "repo": "djangoproject.com",
+   "rule": "CODE-DEBUG-ENABLED",
+   "path": "djangoproject/settings/dev.py",
+   "line": 12,
+   "label": "debatable",
+   "reason": "True, but it is the purpose of a development settings module."
+  },
+  {
+   "repo": "terraform-aws-eks",
+   "rule": "TF-EC2-IMDSV1",
+   "path": "examples/eks-hybrid-nodes/remote.tf",
+   "line": 97,
+   "label": "fp",
+   "reason": "http_endpoint = \"disabled\": IMDS is off entirely."
+  },
+  {
+   "repo": "terraform-aws-eks",
+   "rule": "TF-EC2-IMDSV1",
+   "path": "modules/eks-managed-node-group/main.tf",
+   "line": 98,
+   "label": "fp",
+   "reason": "dynamic block; the variable default is http_tokens = \"required\"."
+  },
+  {
+   "repo": "terraform-aws-eks",
+   "rule": "TF-EC2-IMDSV1",
+   "path": "modules/self-managed-node-group/main.tf",
+   "line": 142,
+   "label": "fp",
+   "reason": "dynamic block; the variable default is http_tokens = \"required\"."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "CHAIN-CI-UNTRUSTED-TO-RELEASE",
+   "path": ".github/workflows/make-release.yaml",
+   "line": 53,
+   "label": "fp",
+   "reason": "Trigger is workflow_dispatch: only people with write access can run it."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "CODE-SQL-INJECTION",
+   "path": "src/productcatalogservice/catalog_loader.go",
+   "line": 132,
+   "label": "fp",
+   "reason": "Table name comes from os.Getenv, not from a request."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "K8S-SECRET-IN-ENV",
+   "path": "kustomize/components/shopping-assistant/shoppingassistantservice.yaml",
+   "line": 51,
+   "label": "fp",
+   "reason": "Template value GOOGLE_API_KEY_VAL."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "K8S-SECRET-IN-ENV",
+   "path": "kustomize/components/shopping-assistant/shoppingassistantservice.yaml",
+   "line": 61,
+   "label": "fp",
+   "reason": "Template value naming a secret, not a secret."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-OIDC-UNTRUSTED",
+   "path": ".github/workflows/cleanup.yaml",
+   "line": 36,
+   "label": "debatable",
+   "reason": "pull_request_target with OIDC, but no pull-request code is executed."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "GHA-OIDC-UNTRUSTED",
+   "path": ".github/workflows/deploy-pr.yaml",
+   "line": 34,
+   "label": "tp",
+   "reason": "workflow_run, checkout of head_sha with allow-unsafe-pr-checkout, GCP OIDC, fork artifact written to GITHUB_ENV."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "DATA-TLS-DISABLED",
+   "path": "src/productcatalogservice/catalog_loader.go",
+   "line": 110,
+   "label": "fp",
+   "reason": "sslmode=disable behind the AlloyDB connector, which encrypts the connection itself."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "SUPPLY-TYPOSQUAT",
+   "path": "src/shoppingassistantservice/requirements.txt",
+   "line": 181,
+   "label": "fp",
+   "reason": "psycopg is psycopg 3, a legitimate package."
+  },
+  {
+   "repo": "microservices-demo",
+   "rule": "SUPPLY-TYPOSQUAT",
+   "path": "src/shoppingassistantservice/requirements.txt",
+   "line": 183,
+   "label": "fp",
+   "reason": "psycopg-binary is legitimate."
+  },
+  {
+   "repo": "commerce",
+   "rule": "CODE-XSS-SINK",
+   "path": "app/product/[handle]/page.tsx",
+   "line": 79,
+   "label": "tp",
+   "reason": "JSON-LD written with dangerouslySetInnerHTML without escaping '<' (LOW, outside the top-10 critical/high metric)."
+  },
+  {
+   "repo": "commerce",
+   "rule": "CODE-XSS-SINK",
+   "path": "components/prose.tsx",
+   "line": 10,
+   "label": "debatable",
+   "reason": "dangerouslySetInnerHTML of CMS HTML (LOW, outside the metric)."
+  }
+ ]
+}
