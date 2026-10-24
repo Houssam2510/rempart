@@ -916,6 +916,60 @@ class R6FalsePositivesTest(IsolatedHome):
         self.assertIn(12, lines)     # whole URL from the request
 
 
+    def test_open_redirect_guards_are_recognised(self):
+        app = """from urllib.parse import urlsplit
+from flask import request, redirect, url_for
+from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
+from docs.models import Page
+
+
+def login_done():
+    nxt = request.args.get('next')
+    if not nxt or urlsplit(nxt).netloc != '':
+        nxt = url_for('index')
+    return redirect(nxt)  # guarded
+
+
+def go():
+    target = request.args['to']
+    if url_has_allowed_host_and_scheme(target, allowed_hosts={'example.com'}):
+        return redirect(target)  # guarded
+    return redirect('/')
+
+
+def legacy_search():
+    url = reverse('search')
+    q = request.args.get('q')
+    if q:
+        url += '?q=%s' % q
+    return redirect(url)  # guarded
+
+
+def stable(version):
+    return redirect(request.get_full_path().replace(version, 'stable', 1))  # guarded
+
+
+def exact():
+    page = Page.objects.filter(title=request.args['q']).first()
+    return redirect(page)  # guarded
+
+
+def open_redirect():
+    return redirect(request.args['next'])  # open
+
+
+def checked_but_ignored():
+    nxt = request.args['next']
+    if urlsplit(nxt).netloc:
+        print('external')
+    return redirect(nxt)  # open
+"""
+        marked = {n: line.rsplit("# ", 1)[1] for n, line in enumerate(app.splitlines(), 1) if "# guarded" in line or "# open" in line}
+        lines = {f.line for f in self.rules_at(self.findings({"app.py": app}), "CODE-OPEN-REDIRECT", "MEDIUM")}
+        self.assertEqual({n for n, kind in marked.items() if kind == "open"}, lines & set(marked))
+        self.assertFalse({n for n, kind in marked.items() if kind == "guarded"} & lines)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,16 @@ def lead(v: Val) -> str:
     return v.const if isinstance(v.const, str) else v.prefix
 
 
+def same_host(v: Val) -> bool:
+    """A redirect target that cannot leave the site: built by the framework's URL reversal,
+    the request's own path, or literal text starting with a single slash."""
+    start = lead(v)
+    return "samehost" in v.flags or "model" in v.flags or (start.startswith("/") and not start.startswith(("//", "/\\")))
+
+
+# urlsplit(x).netloc / urlparse(x).hostname checks, or a framework's safe-URL helper
+_REDIRECT_CHECK = re.compile(r"\b(?:urlsplit|urlparse)\([^()]*\)\.(?:netloc|hostname|scheme)\b"
+                             r"|\b(?:url_has_allowed_host_and_scheme|is_safe_url|url_is_safe|is_safe_redirect_url)\(")
 _FIXED_HOST = re.compile(r"^[A-Za-z][\w+.-]*://[^/?#{}%\s@]+[/?#]")
 
 
@@ -96,7 +106,10 @@ def join(*vals: Val) -> Val:
             for k, kv in v.keys:  # type: ignore[union-attr]
                 merged.setdefault(k, []).append(kv)
         keys = tuple((k, join(*kvs)) for k, kvs in merged.items())
-    flags = frozenset().union(*(v.flags for v in vals)) - ({"validated"} if not all("validated" in v.flags for v in vals) else frozenset())
+    flags = frozenset().union(*(v.flags for v in vals))
+    for strict in ("validated", "samehost", "model"):  # only true of the result when true of every branch
+        if not all(strict in v.flags for v in vals):
+            flags -= {strict}
     flags = flags | {"constlike"} if all(v.constant_like() and not v.taint for v in vals) else flags - {"constlike"}
     leads = [lead(v) for v in vals]
     prefix = os.path.commonprefix(leads) if all(leads) else ""
@@ -410,7 +423,8 @@ class FunctionFlow:
                 return Val(items=left.items + right.items)
             j = join(taint_of(left), taint_of(right))
             prefix = lead(left) + (lead(right) if left.has_const() else "") if isinstance(node.op, ast.Add) else ""
-            return replace(j, const=_NOCONST, prefix=prefix, flags=j.flags | ({"dyn"} if not (left.has_const() and right.has_const()) else set()))
+            keep = left.flags & {"samehost"} if isinstance(node.op, ast.Add) else frozenset()  # appending to a path of this site
+            return replace(j, const=_NOCONST, prefix=prefix, flags=j.flags | keep | ({"dyn"} if not (left.has_const() and right.has_const()) else set()))
         if isinstance(node, ast.UnaryOp):
             v = self.ev(node.operand, check)
             if v.has_const():
@@ -632,6 +646,14 @@ class FunctionFlow:
             # code and wins over name-based guesses below: Repo().find(k) is not str.find
             summary = resolved[0]
             return self._apply_summary(node, summary, recv if summary.is_method and isinstance(node.func, ast.Attribute) else None, args)
+        if short in ("reverse", "resolve_url", "url_for", "reverse_lazy") and name.split(".")[0] not in self.env:
+            return Val(flags=frozenset({"samehost", "constlike"}))  # a URL of this site, built by the framework
+        if short in ("get_full_path", "get_full_path_info"):
+            return replace(taint_of(recv) if recv is not None else CLEAN, flags=frozenset({"samehost"}))
+        if ".objects." in f".{name}." or short in ("get_object_or_404", "get_list_or_404") or (
+                recv is not None and "model" in recv.flags and short in ("first", "last", "get", "latest", "earliest", "filter", "exclude", "all", "order_by")):
+            parts = [taint_of(a) for a in args] + [taint_of(v) for v in kwargs.values()]
+            return Val(taint=join(*parts).taint if parts else frozenset(), flags=frozenset({"model"}))  # a model instance, not a URL
         if name in SANITIZERS or short in ("escape_for_html", "escape_html", "secure_filename", "escape_filter_chars") or learned:
             cats = (SANITIZERS.get(name) or SANITIZERS.get(short, frozenset())) | learned
             base = join(*(taint_of(a) for a in args)) if args else CLEAN
@@ -670,7 +692,8 @@ class FunctionFlow:
                     pass
             j = join(taint_of(recv), *(taint_of(a) for a in args)) if short in ("format", "join", "replace") else taint_of(recv)
             prefix = recv.const.split("{", 1)[0] if short == "format" and isinstance(recv.const, str) else ""
-            return replace(j, prefix=prefix, flags=j.flags | ({"dyn"} if short == "format" and any(not a.has_const() for a in args) else set()))
+            keep = recv.flags & {"samehost"}  # editing a path of this site keeps it on this site
+            return replace(j, prefix=prefix, flags=j.flags | keep | ({"dyn"} if short == "format" and any(not a.has_const() for a in args) else set()))
         if resolved is not None:
             # resolved by name only: its sinks are reported, capped; its result is not trusted
             summary = resolved[0]
@@ -836,7 +859,7 @@ class FunctionFlow:
                 if name in ("pathlib.Path", "Path"):
                     return replace(target, clean=target.clean | {"path"})  # reported once, at construction
         elif name in REDIRECT_SINKS:
-            if a0.user("redirect"):
+            if a0.user("redirect") and not same_host(a0):
                 self._hit("redirect", node, f"{name}() to a URL from request data.", tainted=True)
             return CLEAN  # a redirect response carries no HTML body
         elif name in SSRF_SINKS and a0.user("ssrf") and not fixed_host(a0):  # a literal host cannot be redirected (AUDIT.md R6)
@@ -953,7 +976,9 @@ class FunctionFlow:
                     except Exception:  # noqa: BLE001
                         pass
                 j = join(taint_of(cur), taint_of(add))
-                self.env[s.target.id] = replace(j, const=_NOCONST, flags=j.flags | ({"dyn"} if not add.has_const() else set()))
+                keep = cur.flags & {"samehost"} if isinstance(s.op, ast.Add) else frozenset()  # url += "?q=..." stays on this site
+                self.env[s.target.id] = replace(j, const=_NOCONST, prefix=lead(cur) if isinstance(s.op, ast.Add) else "",
+                                                flags=j.flags | keep | ({"dyn"} if not add.has_const() else set()))
             else:
                 self._assign(s.target, self.ev(s.value), s)
         elif isinstance(s, ast.Expr):
@@ -975,7 +1000,15 @@ class FunctionFlow:
                 self.run(s.body if test else s.orelse)
                 return
             self.ev(s.test)
+            checked = self._redirect_checked(s.test)
+            positive = checked and not any(isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.Not) for n in ast.walk(s.test)) \
+                and not re.search(r"!=|\bis not\b|netloc\s*(?:and|or|\)|$)", ast.unparse(s.test))
+            saved = {n: self.env[n] for n in checked if n in self.env}
+            if positive:  # `if is_safe(x): redirect(x)`: x is safe inside the branch
+                for n, v in saved.items():
+                    self.env[n] = replace(v, clean=v.clean | {"redirect"})
             body_env, body_term = self._branch(s.body)
+            self.env.update(saved)
             else_env, else_term = self._branch(s.orelse)
             if body_term and else_term:
                 self._terminated = True
@@ -988,6 +1021,13 @@ class FunctionFlow:
                 self.env = body_env
             else:
                 self.env = merge_env(body_env, else_env)
+            # `if not safe(x): x = default` or `if not safe(x): return`: what follows only sees a checked x
+            if checked and not positive and (body_term or any(isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store) and n.id in checked
+                                                              for st in s.body for n in ast.walk(st))):
+                for n in checked:
+                    v = self.env.get(n)
+                    if v is not None:
+                        self.env[n] = replace(v, clean=v.clean | {"redirect"})
         elif isinstance(s, ast.Match):
             subject = self.ev(s.subject)
             envs = []
@@ -1084,6 +1124,12 @@ class FunctionFlow:
         return None
 
     _GUARD_SHAPE = re.compile(r"\bin\b|commonpath|is_relative_to|startswith|endswith|isdigit|isalnum|isnumeric|isidentifier|isascii|fullmatch|\.match\(|netloc|scheme|hostname|\bnot\b")
+
+    def _redirect_checked(self, test: ast.expr) -> set[str]:
+        """Variables whose destination host a condition checks (AUDIT.md R6)."""
+        if not _REDIRECT_CHECK.search(ast.unparse(test)):
+            return set()
+        return {n.id for n in ast.walk(test) if isinstance(n, ast.Name) and n.id in self.env}
 
     def _guard(self, test: ast.expr) -> None:
         """`if <check on x>: return` sanitises x (and what x was derived from) for what follows."""
