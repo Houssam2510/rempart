@@ -865,6 +865,17 @@ class R5ChainsTest(IsolatedHome):
         root = self.project(f"r5c-{len(list(self.tmp.iterdir()))}", files)
         return run_scan(root, [ALL_SCANNERS["code"]], Config(), offline=True).context
 
+    def test_a_title_starting_with_an_acronym_keeps_it(self):
+        from rempart.correlate import phrase
+        from rempart.models import Finding, Rule, Severity
+
+        def title(t):
+            return phrase(Finding(Rule("X-TEST-PHRASE", t, Severity.HIGH, "code"), "a.py", 1, ""))
+
+        self.assertEqual(title("OS command built from dynamic input"), "OS command built from dynamic input")
+        self.assertEqual(title("SQL query built by string interpolation"), "SQL query built by string interpolation")
+        self.assertEqual(title("Debug mode enabled"), "debug mode enabled")
+
     def test_narrative_states_only_the_evidence_found(self):
         xss = "export function show(el, html) {\n  el.innerHTML = html;\n}\n"
         cookie = "SESSION_COOKIE_HTTPONLY = False\n"

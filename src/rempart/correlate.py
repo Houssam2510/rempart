@@ -71,7 +71,11 @@ PHRASES = {
 
 
 def phrase(f: Finding) -> str:
-    return PHRASES.get(f.rule.id) or f.rule.title[:1].lower() + f.rule.title[1:]
+    t = f.rule.title
+    if f.rule.id in PHRASES:
+        return PHRASES[f.rule.id]
+    # lower-case the first letter to continue a sentence, unless the first word is an acronym (OS, SQL)
+    return t if t[1:2].isupper() else t[:1].lower() + t[1:]
 
 
 def kev_or_rce(f: Finding) -> bool:
