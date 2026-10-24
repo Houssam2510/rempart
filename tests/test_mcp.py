@@ -9,10 +9,10 @@ from tests.helpers import write_tree
 from rempart.mcp_server import serve
 
 
-def rpc(*messages):
+def rpc(*messages, roots=None):
     stdin = io.StringIO("\n".join(json.dumps(m) for m in messages) + "\n")
     stdout = io.StringIO()
-    serve(stdin, stdout)
+    serve(stdin, stdout, roots=roots)  # the scanned temporary directory is granted explicitly, as `rempart mcp --root` would
     return [json.loads(line) for line in stdout.getvalue().splitlines()]
 
 
@@ -27,6 +27,7 @@ class MCPTest(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "rempart_scan", "arguments": {"path": str(root), "offline": True}}},
             {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "rempart_scan", "arguments": {"path": "/definitely/not/here"}}},
             {"jsonrpc": "2.0", "id": 5, "method": "nope"},
+            roots=[root],
         )
         self.assertEqual([m["id"] for m in out], [1, 2, 3, 4, 5])  # the notification gets no response
         self.assertEqual(out[0]["result"]["protocolVersion"], "2025-06-18")
@@ -39,7 +40,8 @@ class MCPTest(unittest.TestCase):
     def test_finding_details_after_scan(self):
         root = Path(tempfile.mkdtemp())
         write_tree(root, {"a.js": "eval(userInput);\n"})
-        out = rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "rempart_scan", "arguments": {"path": str(root), "offline": True}}})
+        out = rpc({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "rempart_scan", "arguments": {"path": str(root), "offline": True}}},
+                  roots=[root])
         fid = json.loads(out[0]["result"]["content"][0]["text"])["findings"][0]["id"]
         out = rpc({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "rempart_finding", "arguments": {"id": fid}}})
         self.assertIn("remediation", json.loads(out[0]["result"]["content"][0]["text"]))

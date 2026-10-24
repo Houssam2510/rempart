@@ -440,7 +440,7 @@ def cmd_tui(args: argparse.Namespace) -> int:
 def cmd_mcp(args: argparse.Namespace) -> int:
     from rempart.mcp_server import serve
 
-    return serve()
+    return serve(roots=[Path(r) for r in args.root] if args.root else None)
 
 
 def triage(root: Path, finding_id: str, verdict: str, note: str = "", because: str = "", scope: str = "project") -> tuple[str, str]:
@@ -747,7 +747,10 @@ def build_parser() -> argparse.ArgumentParser:
     bn.add_argument("-v", "--verbose", action="store_true", help="list every miss, unexpected finding and fired trap")
     bn.set_defaults(func=cmd_bench)
 
-    sub.add_parser("mcp", help="run as a Model Context Protocol server over stdio (for AI coding assistants: Cursor, VS Code, Windsurf…)").set_defaults(func=cmd_mcp)
+    mc = sub.add_parser("mcp", help="run as a Model Context Protocol server over stdio (for AI coding assistants: Cursor, VS Code, Windsurf…)")
+    mc.add_argument("--root", action="append", metavar="DIR",
+                    help="directory the assistant may scan (repeatable; default: $REMPART_MCP_ROOTS, else the working directory)")
+    mc.set_defaults(func=cmd_mcp)
 
     r = sub.add_parser("rules", help="list rules")
     r.add_argument("--domain")

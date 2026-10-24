@@ -233,6 +233,8 @@ class F3AssistantCannotCloseTest(IsolatedHome):
         from rempart.history import History
 
         root = self.project("p", {"app.py": CMD})
+        m.configure_roots([root])
+        self.addCleanup(m.configure_roots, None)
         r = json.loads(m.tool_scan({"path": str(root), "offline": True}))
         fid = next(f["id"] for f in r["findings"] if f["rule"] == "CODE-CMD-INJECTION")
         m.tool_triage({"id": fid, "verdict": "fp", "note": "assistant says safe"})
@@ -512,6 +514,63 @@ class F7LiveVerificationTest(IsolatedHome):
             self.assertIn(rule_id, doc)
         self.assertIn("canarytokens", doc.lower())
         self.assertIn("GuardDuty", doc)
+
+
+class F8McpBoundariesTest(IsolatedHome):
+    def test_web_audit_refuses_internal_addresses(self):
+        from rempart import mcp_server as m
+
+        for url in ("http://127.0.0.1/", "http://localhost:8080/", "http://10.0.0.5/", "http://192.168.1.1/", "http://172.16.0.1/",
+                    "http://169.254.169.254/latest/meta-data/", "http://[::1]/", "http://[fd00:ec2::254]/", "http://0.0.0.0/",
+                    "http://100.64.0.1/"):
+            with self.assertRaises(ValueError, msg=url):
+                m.tool_web({"url": url})
+
+    def test_the_check_happens_after_resolution_and_the_connection_is_pinned(self):
+        import socket
+        from unittest import mock
+
+        from rempart import mcp_server as m
+
+        def private(host, port, *a, **k):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", port or 80))]
+
+        with mock.patch("socket.getaddrinfo", side_effect=private):
+            with self.assertRaises(ValueError):
+                m.tool_web({"url": "http://rebind.example/"})
+        answers = iter([[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+                        [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 80))]])
+        connected = []
+
+        def connect(address, *a, **k):
+            connected.append(address)
+            raise OSError("stop here")
+
+        with mock.patch("socket.getaddrinfo", side_effect=lambda *a, **k: next(answers)), \
+                mock.patch("socket.create_connection", side_effect=connect):
+            with self.assertRaises(OSError):
+                m.tool_web({"url": "http://rebind.example/"})
+        self.assertEqual(connected[0][0], "93.184.216.34")  # the checked address, never a second resolution
+
+    def test_scan_is_limited_to_the_configured_roots(self):
+        from rempart import mcp_server as m
+
+        inside = self.project("work/app", {"a.py": "x = 1\n"})
+        outside = self.project("elsewhere", {"a.py": "x = 1\n"})
+        m.configure_roots([self.tmp / "work"])
+        try:
+            self.assertIn('"files"', m.tool_scan({"path": str(inside), "offline": True}))
+            for path in (str(outside), str(inside / ".." / ".." / "elsewhere"), "/"):
+                with self.assertRaises(ValueError, msg=path):
+                    m.tool_scan({"path": path, "offline": True})
+        finally:
+            m.configure_roots(None)
+
+    def test_default_root_is_the_servers_working_directory(self):
+        from rempart import mcp_server as m
+
+        m.configure_roots(None)
+        self.assertEqual(m.allowed_roots(), [Path.cwd().resolve()])
 
 
 if __name__ == "__main__":

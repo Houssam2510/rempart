@@ -54,12 +54,43 @@ def _compact(findings: list[Any], limit: int) -> list[dict[str, Any]]:
              "risk": f.risk} for f in findings[:limit]]
 
 
+# ------------------------------------------------------------------ boundaries (AUDIT.md F8)
+# The assistant chooses paths and URLs. Scans stay inside the roots the developer started
+# the server with (`rempart mcp --root DIR`, REMPART_MCP_ROOTS, else the working directory),
+# and the web audit only reaches public addresses.
+
+_ROOTS: list[Path] | None = None
+
+
+def configure_roots(roots: list[Path] | None) -> None:
+    global _ROOTS
+    _ROOTS = [Path(r).expanduser().resolve() for r in roots] if roots else None
+
+
+def allowed_roots() -> list[Path]:
+    if _ROOTS:
+        return _ROOTS
+    import os
+
+    env = [p for p in os.environ.get("REMPART_MCP_ROOTS", "").split(os.pathsep) if p.strip()]
+    return [Path(p).expanduser().resolve() for p in env] or [Path.cwd().resolve()]
+
+
+def _inside_roots(path: str) -> Path:
+    p = Path(path).expanduser().resolve()
+    roots = allowed_roots()
+    if not any(p == r or p.is_relative_to(r) for r in roots):
+        raise ValueError(f"{p} is outside the directories this server may read ({', '.join(map(str, roots))}); "
+                         "start it with `rempart mcp --root DIR` to allow more")
+    return p
+
+
 def tool_scan(args: dict[str, Any]) -> str:
     from rempart.config import Config
     from rempart.engine import run_scan, score
     from rempart.scanners import ALL_SCANNERS
 
-    root = Path(str(args["path"])).expanduser().resolve()
+    root = _inside_roots(str(args["path"]))
     if not root.is_dir():
         raise ValueError(f"{root} is not a directory")
     names = [n.strip() for n in str(args.get("scanners") or "").split(",") if n.strip()] or list(ALL_SCANNERS)
@@ -122,9 +153,13 @@ def tool_triage(args: dict[str, Any]) -> str:
 
 
 def tool_web(args: dict[str, Any]) -> str:
-    from rempart.web import audit
+    from rempart.web import PUBLIC_ONLY, audit
 
-    findings, meta = audit(str(args["url"]))
+    token = PUBLIC_ONLY.set(True)  # an assistant may not use the audit to probe internal addresses
+    try:
+        findings, meta = audit(str(args["url"]))
+    finally:
+        PUBLIC_ONLY.reset(token)
     findings.sort(key=lambda f: -f.risk)
     return json.dumps({"meta": meta, "findings": _compact(findings, 40)}, indent=1, default=str)
 
@@ -132,7 +167,10 @@ def tool_web(args: dict[str, Any]) -> str:
 def tool_image(args: dict[str, Any]) -> str:
     from rempart.images import scan_image
 
-    findings, meta = scan_image(str(args["image"]))
+    ref = str(args["image"])
+    if ref.endswith(".tar") or ref.startswith((".", "/", "~")):
+        ref = str(_inside_roots(ref))  # a local archive: same boundary as a scan
+    findings, meta = scan_image(ref)
     findings.sort(key=lambda f: -f.risk)
     return json.dumps({"meta": meta, "findings": _compact(findings, 40)}, indent=1, default=str)
 
@@ -182,7 +220,8 @@ def handle(msg: dict[str, Any]) -> dict[str, Any] | None:
     return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"method not found: {method}"}}
 
 
-def serve(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> int:
+def serve(stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout, roots: list[Path] | None = None) -> int:
+    configure_roots(roots)
     for line in stdin:
         line = line.strip()
         if not line:

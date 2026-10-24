@@ -202,8 +202,10 @@ It is tested against the real Anthropic Python SDK through a mocked HTTP transpo
 ## 🔌 Plug it into your AI coding assistant (MCP)
 
 ```json
-{ "mcpServers": { "rempart": { "command": "rempart", "args": ["mcp"] } } }
+{ "mcpServers": { "rempart": { "command": "rempart", "args": ["mcp", "--root", "/path/to/your/projects"] } } }
 ```
+
+The assistant can only scan inside the `--root` directories (default: the server's working directory, or `REMPART_MCP_ROOTS`), and `rempart_web_audit` only reaches **public** addresses: the host is resolved once, every address must be public (no private, loopback, link-local, cloud-metadata or reserved range), and the connection goes to that checked address, so a changing DNS answer cannot redirect it; redirects are checked at every hop.
 
 Tools: `rempart_scan` · `rempart_finding` · `rempart_triage` · `rempart_web_audit` · `rempart_image_scan` · `rempart_rules`. Your assistant can scan, read details and record verdicts while it writes code.
 

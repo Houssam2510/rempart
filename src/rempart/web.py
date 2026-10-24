@@ -9,8 +9,10 @@ crawl, so it is safe to run against production.
 
 from __future__ import annotations
 
+import contextvars
 import gzip
 import http.client
+import ipaddress
 import re
 import socket
 import ssl
@@ -65,12 +67,78 @@ class Response:
     redirects: list[str] = field(default_factory=list)
 
 
+# ------------------------------------------------------------------ public-only mode (AUDIT.md F8)
+# When an AI assistant chooses the URL (MCP), the audit must not become a way to probe the
+# machine's own network. Each host is resolved once, every address it resolves to must be
+# public, and the connection goes to that checked address (no second resolution, so a DNS
+# answer that changes in between cannot redirect it). Redirects are checked hop by hop.
+
+PUBLIC_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("rempart_web_public_only", default=False)
+
+
+class BlockedAddress(ValueError):
+    pass
+
+
+def _is_public(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return addr.is_global and not (addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast
+                                   or addr.is_reserved or addr.is_unspecified)
+
+
+def resolve_public(host: str, port: int) -> str:
+    """The address to connect to, after checking that every address of `host` is public."""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise BlockedAddress(f"cannot resolve {host}: {exc}") from exc
+    addrs = [ipaddress.ip_address(str(info[4][0]).split("%")[0]) for info in infos]
+    for a in addrs:
+        if not _is_public(a):
+            raise BlockedAddress(f"{host} resolves to {a}, which is not a public address (private, loopback, link-local, metadata or reserved)")
+    if not addrs:
+        raise BlockedAddress(f"{host} has no address")
+    return str(addrs[0])
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    def __init__(self, host: str, port: int | None, ip: str, **kw: object) -> None:
+        super().__init__(host, port, **kw)  # type: ignore[arg-type]
+        self._ip = ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._ip, self.port), self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, host: str, port: int | None, ip: str, **kw: object) -> None:
+        super().__init__(host, port, **kw)  # type: ignore[arg-type]
+        self._ip = ip
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)  # type: ignore[attr-defined]
+
+
+def _connection(parts: urllib.parse.SplitResult, timeout: float) -> http.client.HTTPConnection:
+    https = parts.scheme == "https"
+    host = parts.hostname or ""
+    if not PUBLIC_ONLY.get():
+        return (http.client.HTTPSConnection if https else http.client.HTTPConnection)(host, parts.port, timeout=timeout)  # type: ignore[arg-type]
+    ip = resolve_public(host, parts.port or (443 if https else 80))
+    return (_PinnedHTTPS if https else _PinnedHTTP)(host, parts.port, ip, timeout=timeout)
+
+
+def _socket_to(host: str, port: int, timeout: float) -> socket.socket:
+    return socket.create_connection((resolve_public(host, port) if PUBLIC_ONLY.get() else host, port), timeout=timeout)
+
+
 def _request(url: str, timeout: float = 15.0, max_redirects: int = 5, accept_encoding: str = "gzip, br") -> Response:
     redirects: list[str] = []
     for _ in range(max_redirects + 1):
         parts = urllib.parse.urlsplit(url)
-        conn_cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
-        conn = conn_cls(parts.hostname or "", parts.port, timeout=timeout)  # type: ignore[arg-type]
+        conn = _connection(parts, timeout)
         path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
         start = time.monotonic()
         conn.request("GET", path, headers={"User-Agent": UA, "Accept": "text/html,*/*", "Accept-Encoding": accept_encoding})
@@ -89,7 +157,7 @@ def _request(url: str, timeout: float = 15.0, max_redirects: int = 5, accept_enc
 
 def _tls_info(host: str, port: int = 443) -> dict[str, object]:
     ctx = ssl.create_default_context()
-    with socket.create_connection((host, port), timeout=10) as sock:
+    with _socket_to(host, port, 10) as sock:
         with ctx.wrap_socket(sock, server_hostname=host) as tls:
             cert = tls.getpeercert() or {}
             info: dict[str, object] = {"version": tls.version(), "cipher": (tls.cipher() or ("", "", 0))[0]}
@@ -105,7 +173,7 @@ def _tls_info(host: str, port: int = 443) -> dict[str, object]:
             c.verify_mode = ssl.CERT_NONE
             c.minimum_version = ver
             c.maximum_version = ver
-            with socket.create_connection((host, port), timeout=6) as s, c.wrap_socket(s, server_hostname=host):
+            with _socket_to(host, port, 6) as s, c.wrap_socket(s, server_hostname=host):
                 legacy.append(ver.name)
         except (ssl.SSLError, OSError, ValueError):
             continue
