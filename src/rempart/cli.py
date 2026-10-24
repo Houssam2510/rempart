@@ -54,7 +54,19 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if not root.is_dir():
         print(f"rempart: {root} is not a directory", file=sys.stderr)
         return 2
-    config = Config.load(root)
+    trust = args.trust_config or ("base" if args.baseline else "head")
+    if trust == "base" and not args.baseline:
+        print("rempart: --trust-config base needs --baseline REF (the branch whose configuration is trusted)", file=sys.stderr)
+        return 2
+    knowledge = None
+    if trust == "base":
+        # the change under review must not decide how it is reviewed (AUDIT.md F4)
+        from rempart.knowledge import FILE as KNOWLEDGE_FILE, Knowledge
+
+        config = Config.from_text(_git_show(root, args.baseline, ".rempart.toml") or "")
+        knowledge = Knowledge.from_text(_git_show(root, args.baseline, KNOWLEDGE_FILE.as_posix()) or "")
+    else:
+        config = Config.load(root)
     if getattr(args, "prod_only", False):
         config.prod_only = True
     names = list(ALL_SCANNERS)
@@ -67,7 +79,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.skip:
         names = [n for n in names if n not in {s.strip() for s in args.skip.split(",")}]
     result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline, correlate=False,
-                      verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None)
+                      verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None, knowledge=knowledge)
     result.allow_errors = args.allow_scanner_errors
     # Optional live sources merged into the same result, so attack paths can span code and production.
     if args.aws:
@@ -110,6 +122,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         result.findings = [f for f in result.findings if f.fingerprint not in known]
         result.suppressed += len(inherited)
         print(f"rempart: {len(inherited)} finding(s) already present at {args.baseline} hidden; showing what this change adds.", file=sys.stderr)
+        result.findings += _config_changes(root, args.baseline, trust)
     result.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
 
     diff = None
@@ -121,7 +134,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         result.add_attack_paths()
         profile = _scan_profile(root, "scan", only=args.only, skip=args.skip, offline=args.offline, aws=args.aws,
                                 image=",".join(args.image or []), git_history=args.git_history, baseline=args.baseline,
-                                prod_only=args.prod_only, verify_secrets=args.verify_secrets)
+                                prod_only=args.prod_only, verify_secrets=args.verify_secrets, trust_config=trust)
         scan_id = hist.record(project, result, profile)
         diff = hist.diff_with_previous(project, scan_id)
         hist.close()
@@ -145,6 +158,28 @@ def cmd_scan(args: argparse.Namespace) -> int:
         else:
             print(out)
     return _exit_code(result, args.fail_on or (config.fail_on.name if config.fail_on else None))
+
+
+def _git_show(root: Path, ref: str, rel: str) -> str | None:
+    """A file as it is at `ref`, relative to the scanned directory; None when absent."""
+    import subprocess
+
+    proc = subprocess.run(["git", "-C", str(root), "show", f"{ref}:./{rel}"], capture_output=True, timeout=60)
+    return proc.stdout.decode("utf-8", "replace") if proc.returncode == 0 else None
+
+
+def _config_changes(root: Path, ref: str, trust: str) -> list:
+    """REMPART-CONFIG-CHANGED for each Rempart file this change set adds, edits or deletes."""
+    from rempart.integrity import config_changed
+    from rempart.knowledge import FILE as KNOWLEDGE_FILE
+
+    out = []
+    for rel in (".rempart.toml", KNOWLEDGE_FILE.as_posix()):
+        path = root / rel
+        head = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+        if head != _git_show(root, ref, rel):
+            out.append(config_changed(rel, ref, trust))
+    return out
 
 
 EXIT_INCOMPLETE = 3  # a scanner failed, timed out or skipped its domain: the scan cannot vouch for anything
@@ -573,6 +608,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--git-history", action="store_true", help="also look for secrets removed from the files but still in past commits")
     s.add_argument("--baseline", metavar="REF", help="only report findings that are not already present at this git revision (e.g. origin/main)")
     s.add_argument("--prod-only", action="store_true", help="ignore dependencies only used to build or test (devDependencies, dev groups)")
+    s.add_argument("--trust-config", choices=["base", "head"],
+                   help="where .rempart.toml and .rempart/knowledge.toml are read from: the --baseline ref (default when --baseline is "
+                        "given, so a pull request cannot reconfigure its own review) or the scanned tree (default otherwise)")
     s.add_argument("--verify-secrets", action="store_true",
                    help="check whether detected credentials are live by calling each provider's read-only identity endpoint (your own repositories only)")
     s.add_argument("--fail-on", choices=[x.name.lower() for x in Severity], help="exit 1 if a finding at or above this severity exists")

@@ -262,6 +262,8 @@ Distribution CVEs with no fix in your release that are over three years old are 
   with: { sarif_file: rempart.sarif }
 ```
 
+On a pull request the action reads `.rempart.toml` and `.rempart/knowledge.toml` from the **target branch** (`trust-config: base`), so the change under review cannot reconfigure its own review; a change to those files is reported as `REMPART-CONFIG-CHANGED` (HIGH). An incomplete scan (a scanner failed or timed out) exits with code **3** and fails the job; `--allow-scanner-errors` accepts it on purpose.
+
 A ready-made workflow (PR gate + nightly scan with fresh CVE data and git-history secrets) is in [examples/workflows/rempart-scheduled.yml](examples/workflows/rempart-scheduled.yml). For local hooks, [`.pre-commit-hooks.yaml`](.pre-commit-hooks.yaml) provides `rempart-secrets` and `rempart`.
 
 The formats are `console` · `json` · `sarif` · `md` · `html` (a self-contained, filterable report). Configure with `.rempart.toml` (`exclude`, `disable`, `[severity]` overrides, `fail_on`), or inline with `# rempart:ignore[RULE-ID]`.

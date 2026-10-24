@@ -95,8 +95,16 @@ class Knowledge:
         if not path.is_file():
             return cls()
         try:
-            data = tomllib.loads(path.read_text(encoding="utf-8"))
-        except (tomllib.TOMLDecodeError, OSError):
+            return cls.from_text(path.read_text(encoding="utf-8"))
+        except OSError:
+            return cls()
+
+    @classmethod
+    def from_text(cls, text: str) -> "Knowledge":
+        """Parse knowledge that may not be on disk (the target branch's, for a pull request)."""
+        try:
+            data = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
             return cls()
         k = cls()
         for name, spec in (data.get("sanitizers") or {}).items():

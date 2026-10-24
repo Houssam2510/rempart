@@ -21,4 +21,8 @@ Please report vulnerabilities in Rempart privately through GitHub's **Report a v
 | `agent` | Anthropic API | **excerpts of your repository** (finding details, files and line ranges the agent chooses to read, search results), under your Anthropic account and its data-retention terms. Do not run it on code you are not allowed to share with that provider. Proof tests it writes are saved locally and never executed. |
 | `--offline` | nothing | — |
 
+## Pull-request scans read their configuration from the target branch
+
+With `--baseline REF` (and in the GitHub Action, input `trust-config: base` by default), `.rempart.toml` and `.rempart/knowledge.toml` are read from `REF` with `git show`, never from the change under review: a pull request cannot disable the rule that catches it or declare its own function a sanitiser. Any change to these files in the pull request is reported as `REMPART-CONFIG-CHANGED` (HIGH) for a person to review. `--trust-config head` trusts the scanned tree on purpose. Inline `rempart:ignore` comments added by a pull request still apply, as `nosemgrep` does for Semgrep: review them in the diff.
+
 Scan history and triage verdicts stay in a local SQLite file (`REMPART_HOME`, default `~/.local/share/rempart`). Detected secret values are redacted before they are stored or printed.

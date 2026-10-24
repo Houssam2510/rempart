@@ -16,6 +16,8 @@ from pathlib import Path
 
 from rempart.models import Severity
 
+FILE = ".rempart.toml"
+
 
 @dataclass
 class Config:
@@ -28,10 +30,16 @@ class Config:
 
     @classmethod
     def load(cls, root: Path) -> "Config":
-        path = root / ".rempart.toml"
+        path = root / FILE
         if not path.is_file():
             return cls()
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        return cls.from_text(path.read_text(encoding="utf-8"))
+
+    @classmethod
+    def from_text(cls, text: str) -> "Config":
+        """Parse a configuration that may not be on disk, such as the target branch's
+        version during a pull-request scan (`--trust-config base`)."""
+        data = tomllib.loads(text) if text.strip() else {}
         cfg = cls(
             exclude=[str(p) for p in data.get("exclude", [])],
             disable={str(r) for r in data.get("disable", [])},

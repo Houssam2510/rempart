@@ -234,13 +234,14 @@ def run_scan(
     verify_secrets: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
     scanner_timeout: float | None = None,
+    knowledge: Any = None,
 ) -> ScanResult:
     """`progress(step, done, total)`, when given, is called before each scanner runs.
     A scanner that raises or runs longer than `scanner_timeout` seconds becomes a
     SCANNER-ERROR finding and makes the result incomplete (fail closed)."""
     from rempart.knowledge import Knowledge, using
 
-    with using(Knowledge.load(root)) as knowledge:
+    with using(knowledge if knowledge is not None else Knowledge.load(root)) as knowledge:
         result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets, progress=progress,
                            scanner_timeout=scanner_timeout)
         result.knowledge_digest = knowledge.digest()

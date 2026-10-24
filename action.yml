@@ -13,6 +13,12 @@ inputs:
   sarif:
     description: Where to write the SARIF report
     default: "rempart.sarif"
+  trust-config:
+    description: >-
+      Where Rempart reads .rempart.toml and .rempart/knowledge.toml on a pull request: "base" (the target branch, so the
+      change under review cannot disable rules or declare sanitisers for itself) or "head". Any change to these files in
+      the pull request is reported as REMPART-CONFIG-CHANGED either way.
+    default: "base"
   baseline:
     description: >-
       Only report findings that are not already present at this git ref. "auto" uses the pull request's target branch
@@ -42,13 +48,14 @@ runs:
         SARIF_OUT: ${{ inputs.sarif }}
         BASELINE: ${{ inputs.baseline }}
         BASE_REF: ${{ github.base_ref }}
+        TRUST_CONFIG: ${{ inputs.trust-config }}
       run: |
         args=(scan "$SCAN_PATH" --no-history --format sarif --output "$SARIF_OUT" --also "md:${RUNNER_TEMP}/rempart.md")
         if [ "$BASELINE" = "auto" ] && [ -n "$BASE_REF" ]; then
           git fetch --no-tags --depth=1 origin "$BASE_REF" >/dev/null 2>&1 || true
-          args+=(--baseline "origin/${BASE_REF}")
+          args+=(--baseline "origin/${BASE_REF}" --trust-config "$TRUST_CONFIG")
         elif [ -n "$BASELINE" ] && [ "$BASELINE" != "auto" ]; then
-          args+=(--baseline "$BASELINE")
+          args+=(--baseline "$BASELINE" --trust-config "$TRUST_CONFIG")
         fi
         if [ -n "$FAIL_ON" ]; then args+=(--fail-on "$FAIL_ON"); fi
         set +e

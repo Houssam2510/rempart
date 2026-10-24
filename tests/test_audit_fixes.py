@@ -279,5 +279,68 @@ class F3AssistantCannotCloseTest(IsolatedHome):
         self.assertTrue("ai_assistant" in text, "README must say that assistant verdicts are recorded as ai_assistant")
 
 
+class F4ConfigFromBaseTest(IsolatedHome):
+    def git(self, root: Path, *args: str) -> str:
+        env = {**os.environ, "GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "a@b", "GIT_COMMITTER_NAME": "a", "GIT_COMMITTER_EMAIL": "a@b"}
+        return subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+    def pull_request(self, head_files: dict[str, str]) -> tuple[Path, str]:
+        """A repository whose base commit is clean and whose head adds `head_files`."""
+        root = self.project("repo", {"app.py": "print('ok')\n", "helpers.py": "def clean(v):\n    return v.strip()\n"})
+        self.git(root, "init", "-q")
+        self.git(root, "add", "-A")
+        self.git(root, "commit", "-q", "-m", "base")
+        base = self.git(root, "rev-parse", "HEAD")
+        for rel, text in head_files.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text)
+        self.git(root, "add", "-A")
+        self.git(root, "commit", "-q", "-m", "head")
+        return root, base
+
+    VULN = "import os\nfrom flask import request\nfrom helpers import clean\n\n\ndef f():\n    os.system('ping ' + clean(request.args['h']))\n"
+
+    def test_audit_scenario_a_pr_cannot_disable_the_rule_that_catches_it(self):
+        root, base = self.pull_request({"app.py": self.VULN, ".rempart.toml": 'disable = ["CODE-CMD-INJECTION"]\n'})
+        code, data = self.scan_json(root, "--baseline", base, "--fail-on", "high")
+        self.assertEqual(code, 1)
+        ids = {f["rule_id"] for f in data["findings"]}
+        self.assertIn("CODE-CMD-INJECTION", ids)
+        self.assertIn("REMPART-CONFIG-CHANGED", ids)
+
+    def test_audit_scenario_a_pr_cannot_declare_its_own_sanitiser(self):
+        knowledge = '[sanitizers]\nclean = { categories = ["cmd"] }\n'
+        root, base = self.pull_request({"app.py": self.VULN, ".rempart/knowledge.toml": knowledge})
+        code, data = self.scan_json(root, "--baseline", base, "--fail-on", "high")
+        self.assertEqual(code, 1)
+        self.assertIn("CODE-CMD-INJECTION", {f["rule_id"] for f in data["findings"]})
+        changed = [f for f in data["findings"] if f["rule_id"] == "REMPART-CONFIG-CHANGED"]
+        self.assertEqual((changed[0]["path"], changed[0]["severity"]), (".rempart/knowledge.toml", "HIGH"))
+
+    def test_trusting_the_head_is_explicit_and_still_flagged_for_review(self):
+        root, base = self.pull_request({"app.py": self.VULN, ".rempart.toml": 'disable = ["CODE-CMD-INJECTION"]\n'})
+        code, data = self.scan_json(root, "--baseline", base, "--trust-config", "head", "--fail-on", "high")
+        ids = {f["rule_id"] for f in data["findings"]}
+        self.assertNotIn("CODE-CMD-INJECTION", ids)  # the head's configuration was trusted, on request
+        self.assertIn("REMPART-CONFIG-CHANGED", ids)
+        self.assertEqual(code, 1)
+
+    def test_unchanged_configuration_raises_nothing(self):
+        root, base = self.pull_request({"app.py": "print('still fine')\n"})
+        code, data = self.scan_json(root, "--baseline", base, "--fail-on", "high")
+        self.assertEqual(code, 0)
+        self.assertNotIn("REMPART-CONFIG-CHANGED", {f["rule_id"] for f in data["findings"]})
+
+    def test_the_action_trusts_the_base_by_default(self):
+        import yaml
+
+        action = yaml.safe_load((Path(__file__).resolve().parents[1] / "action.yml").read_text())
+        self.assertEqual(action["inputs"]["trust-config"]["default"], "base")
+        scan_step = next(s for s in action["runs"]["steps"] if s.get("name") == "Scan")
+        self.assertIn("--trust-config", scan_step["run"])
+        self.assertNotIn("${{", scan_step["run"])  # inputs still only through env
+
+
 if __name__ == "__main__":
     unittest.main()

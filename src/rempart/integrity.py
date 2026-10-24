@@ -13,6 +13,19 @@ R_SCANNER_ERROR = rule(
     confidence=1.0)
 
 
+R_CONFIG_CHANGED = rule(
+    "REMPART-CONFIG-CHANGED", "Change set modifies Rempart's own configuration or knowledge", Severity.HIGH, "scan",
+    fix="A change under review must not decide how it is reviewed: a person checks this file's diff. Pull-request scans read "
+        "these files from the target branch (--trust-config base) unless told otherwise.",
+    confidence=1.0)
+
+
+def config_changed(path: str, ref: str, trusted: str) -> Finding:
+    used = f"the version at {ref} was used" if trusted == "base" else "the changed version was used (--trust-config head)"
+    return Finding(R_CONFIG_CHANGED, path, 1, f"{path} differs from {ref}; {used}. A person must review this change.",
+                   snippet=path, extra={"anchor": f"config-changed:{path}"}, verification="observed")
+
+
 def scanner_error(name: str, message: str) -> Finding:
     """One HIGH finding per failed scanner (or domain skipped because of an error)."""
     return Finding(R_SCANNER_ERROR, f"scanner:{name}", 0, f"{name}: {message}"[:500], snippet=name,
