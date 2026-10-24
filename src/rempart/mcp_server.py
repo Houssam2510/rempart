@@ -98,14 +98,14 @@ def tool_triage(args: dict[str, Any]) -> str:
         if not _LAST.get("recorded"):  # triage needs the finding in history
             hist.record(project, _LAST["result"])
             _LAST["recorded"] = True
-        hist.triage(project, f.fingerprint, str(args["verdict"]), str(args.get("note") or ""))
+        # an assistant's verdict is evidence (weight 0.5), never a decision: it cannot close
+        # a finding nor move the severity that --fail-on reads (AUDIT.md F3)
+        hist.triage(project, f.fingerprint, str(args["verdict"]), str(args.get("note") or ""), source="ai_assistant")
     finally:
         hist.close()
     out = f"recorded {args['verdict']} for {f.rule.id} at {f.path}:{f.line}"
     because = str(args.get("because") or "")
     if because and args["verdict"] != "tp":
-        from pathlib import Path
-
         from rempart.knowledge import Knowledge
 
         kind, _, value = because.partition(":")

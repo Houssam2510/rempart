@@ -224,5 +224,60 @@ class F2FailClosedTest(IsolatedHome):
         self.assertEqual((scans[0]["score"], scans[0]["grade"]), (None, "INCOMPLETE"))
 
 
+CMD = "import os\nfrom flask import request\n\n\ndef f():\n    os.system('ping ' + request.args['h'])\n"
+
+
+class F3AssistantCannotCloseTest(IsolatedHome):
+    def test_audit_scenario_an_mcp_verdict_neither_closes_nor_passes_the_gate(self):
+        from rempart import mcp_server as m
+        from rempart.history import History
+
+        root = self.project("p", {"app.py": CMD})
+        r = json.loads(m.tool_scan({"path": str(root), "offline": True}))
+        fid = next(f["id"] for f in r["findings"] if f["rule"] == "CODE-CMD-INJECTION")
+        m.tool_triage({"id": fid, "verdict": "fp", "note": "assistant says safe"})
+        hist = History()
+        self.assertEqual(hist.db.execute("SELECT verdict, source FROM verdicts").fetchall(), [("fp", "ai_assistant")])
+        hist.close()
+        code, data = self.scan_json(root, "--fail-on", "high")
+        self.assertEqual(code, 1)
+        self.assertIn("CODE-CMD-INJECTION", {f["rule_id"] for f in data["findings"]})
+
+    def test_many_non_human_false_positives_never_lower_the_severity_used_by_the_gate(self):
+        from rempart.history import History, project_identity
+
+        files = {f"m{i}.py": CMD.replace("def f", f"def f{i}") for i in range(12)}
+        root = self.project("many", files)
+        _, data = self.scan_json(root)
+        hist = History()
+        project = project_identity(root)
+        for f in data["findings"][:10]:
+            hist.triage(project, f["fingerprint"], "fp", source="ai_assistant")
+            hist.triage(project, f["fingerprint"], "fp", source="ai")
+        hist.close()
+        code, after = self.scan_json(root, "--fail-on", "critical")
+        self.assertEqual(code, 1)
+        self.assertTrue(all(f["severity"] == "CRITICAL" for f in after["findings"] if f["rule_id"] == "CODE-CMD-INJECTION"))
+
+    def test_human_false_positives_still_lower_a_rule_that_keeps_being_wrong(self):
+        from rempart.history import History, project_identity
+
+        files = {f"m{i}.py": CMD.replace("def f", f"def f{i}") for i in range(8)}
+        root = self.project("human", files)
+        _, data = self.scan_json(root)
+        hist = History()
+        project = project_identity(root)
+        for f in data["findings"][:6]:
+            hist.triage(project, f["fingerprint"], "fp")
+        hist.close()
+        _, after = self.scan_json(root)
+        left = [f for f in after["findings"] if f["rule_id"] == "CODE-CMD-INJECTION"]
+        self.assertTrue(left and all(f["severity"] == "HIGH" for f in left))
+
+    def test_the_readme_states_the_real_behaviour(self):
+        text = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+        self.assertTrue("ai_assistant" in text, "README must say that assistant verdicts are recorded as ai_assistant")
+
+
 if __name__ == "__main__":
     unittest.main()

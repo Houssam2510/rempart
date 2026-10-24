@@ -205,6 +205,8 @@ It is tested against the real Anthropic Python SDK through a mocked HTTP transpo
 
 Tools: `rempart_scan` · `rempart_finding` · `rempart_triage` · `rempart_web_audit` · `rempart_image_scan` · `rempart_rules`. Your assistant can scan, read details and record verdicts while it writes code.
 
+What an assistant records is **evidence, not a decision**: `rempart_triage` stores its verdict with the source `ai_assistant`, at weight 0.5, in the scanned project only. It never closes a finding and never changes the severity that `--fail-on` reads: only verdicts from `rempart triage` (a person) do. A reason it gives (`because`) is stored as a proposal that a person accepts with `rempart learn --accept-proposals`.
+
 ## 🗺️ Coverage
 
 <details open>
@@ -239,12 +241,12 @@ if CVE is in CISA KEV: risk = max(risk, 95)                 # fact beats predict
 posture score = 100 × exp(−penalty / 120)                   # repeats of one rule weigh 1, ½, ⅓…
 precision(rule) = (TP + a) / (TP + FP + a + b)              # Beta prior from the finding's own confidence
 evidence weight  = source × 0.5^(age / 1 year) × (0.25 if it judged an older rule version)
-source           = human 1 · AI agent 0.5 · fixed in code 0.5 · inline rempart:ignore 0.5
+source           = human 1 · AI agent 0.5 · assistant over MCP (ai_assistant) 0.5 · fixed in code 0.5 · inline rempart:ignore 0.5 (capped at 1 per rule)
 ```
 
 A finding counts as **fixed in code** only when it vanished between two scans run the same way (same Rempart version, options, `.rempart.toml` and learned knowledge) while its file was still scanned: nothing but the code can explain it. Otherwise it is only "no longer reported".
 
-Distribution CVEs with no fix in your release that are over three years old are kept but ranked LOW unless KEV-listed. Rules with ≥ 5 false positives and < 25 % precision drop one severity level.
+Distribution CVEs with no fix in your release that are over three years old are kept but ranked LOW unless KEV-listed. Rules with ≥ 5 **human** false positives and < 25 % precision from human verdicts alone drop one severity level: no automatic or AI evidence can move a finding below a `--fail-on` threshold. Learning is per project; only `rempart triage --global` crosses projects.
 
 </details>
 

@@ -79,9 +79,9 @@ _MIGRATIONS = {
 # never close a finding. Implicit and inline signals are weaker still in meaning but
 # frequent, so they also count half. Only a human verdict suppresses future findings.
 AI_WEIGHT = 0.5
-SOURCE_WEIGHT = {"human": 1.0, "ai": AI_WEIGHT, "implicit": 0.5, "inline": 0.5}
+SOURCE_WEIGHT = {"human": 1.0, "ai": AI_WEIGHT, "ai_assistant": AI_WEIGHT, "implicit": 0.5, "inline": 0.5}
 # Who may overwrite whom: a human verdict always wins; the agent overrides automatic signals.
-SOURCE_RANK = {"human": 3, "ai": 2, "implicit": 1, "inline": 1}
+SOURCE_RANK = {"human": 3, "ai": 2, "ai_assistant": 2, "implicit": 1, "inline": 1}
 HALF_LIFE_DAYS = 365.0
 # Total weight that `rempart:ignore` lines can carry for one rule in one project: they can
 # nudge the estimate, never decide it, so a file full of ignores cannot sink a rule.
@@ -162,6 +162,10 @@ class Calibrator:
         self.rules = rules or {}
         self.by_rule: dict[str, RuleStats] = {}
         self.by_context: dict[tuple[str, str], RuleStats] = {}
+        # Severity, which decides --fail-on, only ever moves on people's verdicts: the
+        # agent, an assistant, fixes and inline ignores can only adjust confidence.
+        self.human_rule: dict[str, RuleStats] = {}
+        self.human_context: dict[tuple[str, str], RuleStats] = {}
         inline_used: dict[tuple[str, str], float] = {}
         for e in evidence:
             w = self.weight(e)
@@ -171,8 +175,12 @@ class Calibrator:
                 inline_used[key] = inline_used.get(key, 0.0) + w
             if w <= 0:
                 continue
-            for st in (self.by_rule.setdefault(e.rule_id, RuleStats(e.rule_id, 0, 0, 0)),
-                       self.by_context.setdefault((e.rule_id, path_context(e.path)), RuleStats(e.rule_id, 0, 0, 0))):
+            targets = [self.by_rule.setdefault(e.rule_id, RuleStats(e.rule_id, 0, 0, 0)),
+                       self.by_context.setdefault((e.rule_id, path_context(e.path)), RuleStats(e.rule_id, 0, 0, 0))]
+            if e.source == "human":
+                targets += [self.human_rule.setdefault(e.rule_id, RuleStats(e.rule_id, 0, 0, 0)),
+                            self.human_context.setdefault((e.rule_id, path_context(e.path)), RuleStats(e.rule_id, 0, 0, 0))]
+            for st in targets:
                 if e.verdict == "tp":
                     st.tp += w
                 elif e.verdict == "fp":
@@ -205,9 +213,15 @@ class Calibrator:
             where = f" in {ctx} files"
         f.confidence = round(p, 2)
         f.learned_note = f"learned precision {p:.0%}{where} from {s.tp:g} TP / {s.fp:g} FP"
-        if s.fp >= 5 and p < 0.25 and f.severity is not None:
-            f.severity = f.severity.lower()
-            f.learned_note += ", severity lowered"
+        # same two-level estimate, from people's verdicts alone, decides the severity
+        hr, hc = self.human_rule.get(f.rule.id), self.human_context.get((f.rule.id, ctx))
+        if hr and f.severity is not None:
+            hp, hs = hr.precision(prior=min(0.97, max(0.03, base))), hr
+            if hc and (hc.tp + hc.fp) >= 2:
+                hp, hs = hc.precision(prior=min(0.97, max(0.03, hp))), hc
+            if hs.fp >= 5 and hp < 0.25:
+                f.severity = f.severity.lower()
+                f.learned_note += f", severity lowered by {hs.fp:g} human false positive(s)"
 
 
 class History:
@@ -324,7 +338,7 @@ class History:
         from rempart.registry import REGISTRY
 
         version = REGISTRY[rule_id].version if rule_id in REGISTRY else 1
-        rank = "CASE {col} WHEN 'human' THEN 3 WHEN 'ai' THEN 2 ELSE 1 END"
+        rank = "CASE {col} WHEN 'human' THEN 3 WHEN 'ai' THEN 2 WHEN 'ai_assistant' THEN 2 ELSE 1 END"
         # a stronger source always wins; an equal one refreshes (a person changing their mind)
         self.db.execute(
             "INSERT INTO verdicts(project, fingerprint, rule_id, verdict, note, ts, source, path, rule_version, scope) VALUES (?,?,?,?,?,?,?,?,?,?) "
