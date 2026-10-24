@@ -127,5 +127,102 @@ class F1LearningIsolationTest(IsolatedHome):
             os.environ["GIT_CEILING_DIRECTORIES"] = str(self.tmp)
 
 
+class _Boom:
+    name = "boom"
+
+    def scan(self, ctx):
+        raise TypeError("cannot use 'list' as a set element (unhashable type: 'list')")
+        yield  # pragma: no cover
+
+
+class _Slow:
+    name = "slow"
+
+    def scan(self, ctx):
+        import time
+
+        time.sleep(30)
+        return []
+
+
+class F2FailClosedTest(IsolatedHome):
+    def setUp(self):
+        super().setUp()
+        from rempart import scanners
+
+        self._saved = dict(scanners.ALL_SCANNERS)
+        scanners.ALL_SCANNERS.update({"boom": _Boom(), "slow": _Slow()})
+        self.root = self.project("p", {"app.py": "print('hello')\n"})
+
+    def tearDown(self):
+        from rempart import scanners
+
+        scanners.ALL_SCANNERS.clear()
+        scanners.ALL_SCANNERS.update(self._saved)
+        super().tearDown()
+
+    def test_audit_scenario_a_crashing_scanner_never_yields_a_grade_or_a_passing_exit(self):
+        code, out, _ = run_cli("scan", str(self.root), "--offline", "--only", "boom,code", "--fail-on", "high")
+        self.assertEqual(code, 3)
+        self.assertNotIn("grade A", out)
+        self.assertNotIn("100/100", out)
+        self.assertIn("incomplete", out.lower())
+        code, _, _ = run_cli("scan", str(self.root), "--offline", "--only", "boom,code")  # no --fail-on either
+        self.assertEqual(code, 3)
+
+    def test_error_is_a_high_finding_and_the_reports_say_incomplete(self):
+        out = self.tmp / "r.json"
+        run_cli("scan", str(self.root), "--offline", "--only", "boom", "-f", "json", "-o", str(out))
+        data = json.loads(out.read_text())
+        self.assertIsNone(data["score"])
+        self.assertIsNone(data["grade"])
+        self.assertFalse(data["complete"])
+        err = [f for f in data["findings"] if f["rule_id"] == "SCANNER-ERROR"]
+        self.assertEqual(err[0]["severity"], "HIGH")
+        md = self.tmp / "r.md"
+        run_cli("scan", str(self.root), "--offline", "--only", "boom", "-f", "md", "-o", str(md))
+        self.assertIn("incomplete", md.read_text().lower())
+        sarif = self.tmp / "r.sarif"
+        run_cli("scan", str(self.root), "--offline", "--only", "boom", "-f", "sarif", "-o", str(sarif))
+        self.assertFalse(json.loads(sarif.read_text())["runs"][0]["invocations"][0]["executionSuccessful"])
+
+    def test_explicit_opt_out(self):
+        code, out, _ = run_cli("scan", str(self.root), "--offline", "--only", "boom", "--allow-scanner-errors")
+        self.assertEqual(code, 0)
+        self.assertIn("incomplete", out.lower())
+
+    def test_a_timeout_counts_as_an_error(self):
+        import time
+
+        start = time.monotonic()
+        code, out, _ = run_cli("scan", str(self.root), "--offline", "--only", "slow", "--scanner-timeout", "1")
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(code, 3)
+        self.assertIn("timed out", out)
+
+    def test_a_domain_skipped_by_a_network_error_counts_as_an_error(self):
+        from unittest import mock
+
+        from rempart.netcache import NetworkError
+        from rempart.scanners.deps import DependencyScanner
+
+        root = self.project("deps", {"requirements.txt": "flask==2.0.0\n"})
+        with mock.patch.object(DependencyScanner, "vulnerabilities", side_effect=NetworkError("OSV.dev unreachable")):
+            code, out, _ = run_cli("scan", str(root), "--only", "dependencies")
+        self.assertEqual(code, 3)
+        self.assertIn("OSV.dev unreachable", out)
+        code, _, _ = run_cli("scan", str(root), "--only", "dependencies", "--offline")  # offline is a choice, not an error
+        self.assertEqual(code, 0)
+
+    def test_history_does_not_record_a_grade_for_an_incomplete_scan(self):
+        from rempart.history import History, project_identity
+
+        run_cli("scan", str(self.root), "--offline", "--only", "boom")
+        hist = History()
+        scans = hist.scans(project_identity(self.root))
+        hist.close()
+        self.assertEqual((scans[0]["score"], scans[0]["grade"]), (None, "INCOMPLETE"))
+
+
 if __name__ == "__main__":
     unittest.main()

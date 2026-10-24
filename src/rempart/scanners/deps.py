@@ -242,6 +242,8 @@ class DependencyScanner:
             yield from self.with_reachability(ctx, self.vulnerabilities(packages))
         except NetworkError as exc:
             yield Finding(R_OSV_DOWN, packages[0].path, 0, f"OSV.dev unreachable: {exc}", extra={"anchor": "network"})
+            # online but the lookup failed: the whole domain was skipped, which is an error, not a clean result
+            ctx.report_error(self.name, f"vulnerability lookup skipped, OSV.dev unreachable: {exc}")
 
     @staticmethod
     def with_reachability(ctx: ScanContext, findings: Iterator[Finding]) -> Iterator[Finding]:

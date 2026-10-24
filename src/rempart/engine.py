@@ -62,6 +62,11 @@ class ScanContext:
     offline: bool = False
     verify_secrets: bool = False
     _cache: dict[str, str | None] = field(default_factory=dict)
+    errors: list[tuple[str, str]] = field(default_factory=list)  # (scanner, message): a domain skipped because of an error
+
+    def report_error(self, scanner: str, message: str) -> None:
+        """For a scanner that keeps running but could not cover its whole domain."""
+        self.errors.append((scanner, message))
 
     def text(self, rel: str) -> str | None:
         if rel not in self._cache:
@@ -162,6 +167,7 @@ class ScanResult:
     context: list[Finding] = field(default_factory=list)
     graph: Any = None  # rempart.graph.ResourceGraph, when the scan read the repository
     files: list[str] = field(default_factory=list)  # every file the scan read (learning: "still there?")
+    allow_errors: bool = False  # set by --allow-scanner-errors: the caller accepts an incomplete scan
     ignored: list[Finding] = field(default_factory=list)  # silenced by an inline `rempart:ignore` (a learning signal)
     knowledge_digest: str = ""  # what .rempart/knowledge.toml held for this scan
 
@@ -172,6 +178,17 @@ class ScanResult:
         self.findings = [f for f in self.findings if f.rule.domain != "attack-path"]
         self.findings += correlate(self.findings, self.context, self.graph)
         self.findings.sort(key=lambda f: (-f.risk, f.path, f.line))
+
+    @property
+    def complete(self) -> bool:
+        """False when a scanner failed, timed out or skipped its domain: no score then."""
+        return not self.errors
+
+    def add_error(self, scanner: str, message: str) -> None:
+        from rempart.integrity import scanner_error
+
+        self.errors.append(f"{scanner}: {message}")
+        self.findings.append(scanner_error(scanner, message))
 
     def counts(self) -> dict[str, int]:
         c = {s.name: 0 for s in Severity}
@@ -216,25 +233,57 @@ def run_scan(
     correlate: bool = True,
     verify_secrets: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
+    scanner_timeout: float | None = None,
 ) -> ScanResult:
-    """`progress(step, done, total)`, when given, is called before each scanner runs."""
+    """`progress(step, done, total)`, when given, is called before each scanner runs.
+    A scanner that raises or runs longer than `scanner_timeout` seconds becomes a
+    SCANNER-ERROR finding and makes the result incomplete (fail closed)."""
     from rempart.knowledge import Knowledge, using
 
     with using(Knowledge.load(root)) as knowledge:
-        result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets, progress=progress)
+        result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets, progress=progress,
+                           scanner_timeout=scanner_timeout)
         result.knowledge_digest = knowledge.digest()
         if correlate:
             result.add_attack_paths()
     return result
 
 
+def _run_scanner(scanner: Scanner, ctx: ScanContext, timeout: float | None) -> list[Finding]:
+    """Run one scanner, in a worker thread when a timeout is set. The thread gets a copy
+    of the caller's context (learned knowledge is a context variable). A scanner that
+    overruns is abandoned, not killed: its thread is a daemon and its results are ignored."""
+    if timeout is None:
+        return list(scanner.scan(ctx))
+    import contextvars
+    import threading
+
+    box: dict[str, Any] = {}
+    context = contextvars.copy_context()
+
+    def work() -> None:
+        try:
+            box["findings"] = context.run(lambda: list(scanner.scan(ctx)))
+        except BaseException as exc:  # handed back to the caller below
+            box["error"] = exc
+
+    t = threading.Thread(target=work, name=f"rempart-{scanner.name}", daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise TimeoutError(f"timed out after {timeout:g}s")
+    if "error" in box:
+        raise box["error"]
+    return box["findings"]
+
+
 def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: bool, verify_secrets: bool,
-              progress: Callable[[str, int, int], None] | None = None) -> ScanResult:
+              progress: Callable[[str, int, int], None] | None = None, scanner_timeout: float | None = None) -> ScanResult:
     start = time.monotonic()
     files, tracked = discover(root, config)
     ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline, verify_secrets=verify_secrets)
     findings: list[Finding] = []
-    errors: list[str] = []
+    failures: list[tuple[str, str]] = []
     suppressed = 0
     ignored: list[Finding] = []
     seen: set[str] = set()
@@ -242,9 +291,12 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
         if progress is not None:
             progress(scanner.name, i, len(scanners))
         try:
-            produced = list(scanner.scan(ctx))
-        except Exception as exc:  # one broken scanner must not hide the others' results
-            errors.append(f"{scanner.name}: {type(exc).__name__}: {exc}")
+            produced = _run_scanner(scanner, ctx, scanner_timeout)
+        except TimeoutError as exc:
+            failures.append((scanner.name, str(exc)))
+            continue
+        except Exception as exc:  # one broken scanner must not hide the others' results, nor pass for a clean scan
+            failures.append((scanner.name, f"{type(exc).__name__}: {exc}"))
             continue
         for f in produced:
             if f.rule.id in config.disable:
@@ -275,12 +327,13 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
         duration_s=round(time.monotonic() - start, 2),
         scanners=[s.name for s in scanners],
         suppressed=suppressed,
-        errors=errors,
         context=context_signals(files, ctx.text),
         graph=build_graph(files, ctx.text),
         files=files,
         ignored=ignored,
     )
+    for name, message in failures + ctx.errors:
+        result.add_error(name, message)
     return result
 
 

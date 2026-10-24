@@ -29,7 +29,8 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
         (f"{result.files_scanned} files · " if result.files_scanned else "") + f"{len(result.scanners)} scanner(s) · {result.duration_s}s"
         + (f" · {result.suppressed} suppressed" if result.suppressed else ""),
         "",
-        col(f"  Posture score {value}/100  grade {grade}", BOLD),
+        col(f"  Posture score {value}/100  grade {grade}", BOLD) if result.complete else
+        col(f"  Posture score: INCOMPLETE — {len(result.errors)} scanner error(s), no grade is given", COLORS[Severity.HIGH]),
         "  " + "  ".join(col(f"{counts[s.name]} {s.name.lower()}", COLORS[s]) for s in sorted(Severity, reverse=True)),
         "",
     ]

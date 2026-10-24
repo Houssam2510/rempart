@@ -68,8 +68,9 @@ def tool_scan(args: dict[str, Any]) -> str:
         raise ValueError(f"unknown scanners {unknown}; available: {list(ALL_SCANNERS)}")
     result = run_scan(root, [ALL_SCANNERS[n] for n in names], Config.load(root), offline=bool(args.get("offline", False)))
     _LAST["result"] = result
-    value, grade = score(result.findings)
-    return json.dumps({"root": str(root), "score": value, "grade": grade, "counts": result.counts(), "files": result.files_scanned,
+    value, grade = score(result.findings) if result.complete else (None, None)
+    return json.dumps({"root": str(root), "complete": result.complete, "errors": result.errors, "score": value, "grade": grade,
+                       "counts": result.counts(), "files": result.files_scanned,
                        "findings": _compact(result.findings, int(args.get("limit") or 25))}, indent=1)
 
 

@@ -13,11 +13,12 @@ from rempart.scanners.deps import upgrade_plan
 
 
 def render_json(result: ScanResult) -> str:
-    value, grade = score(result.findings)
+    value, grade = score(result.findings) if result.complete else (None, None)
     return json.dumps({
         "tool": {"name": "rempart", "version": __version__},
         "root": result.root,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "complete": result.complete,
         "score": value, "grade": grade,
         "counts": result.counts(),
         "files_scanned": result.files_scanned,
@@ -61,7 +62,10 @@ def render_sarif(result: ScanResult) -> str:
         })
     return json.dumps({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "version": "2.1.0",
-        "runs": [{"tool": {"driver": {"name": "rempart", "version": __version__, "informationUri": "https://github.com/Houssam2510/rempart", "rules": rules}}, "results": results}],
+        "runs": [{"tool": {"driver": {"name": "rempart", "version": __version__, "informationUri": "https://github.com/Houssam2510/rempart", "rules": rules}},
+                  "invocations": [{"executionSuccessful": result.complete,
+                                   "toolExecutionNotifications": [{"level": "error", "message": {"text": e}} for e in result.errors]}],
+                  "results": results}],
     }, indent=2)
 
 
@@ -76,8 +80,10 @@ def _owasp_matrix(result: ScanResult) -> Counter[str]:
 def render_markdown(result: ScanResult) -> str:
     value, grade = score(result.findings)
     counts = result.counts()
+    title = (f"## Rempart security report — grade **{grade}** ({value}/100)" if result.complete else
+             f"## Rempart security report — **incomplete**: {len(result.errors)} scanner error(s), no grade is given")
     lines = [
-        f"## Rempart security report — grade **{grade}** ({value}/100)", "",
+        title, "",
         "| Critical | High | Medium | Low | Info |", "|---:|---:|---:|---:|---:|",
         f"| {counts['CRITICAL']} | {counts['HIGH']} | {counts['MEDIUM']} | {counts['LOW']} | {counts['INFO']} |", "",
     ]
@@ -142,7 +148,7 @@ details summary{{cursor:pointer;color:var(--muted);margin-top:4px}}.wrap{{overfl
 @media (max-width:640px){{#t{{table-layout:fixed}}#t th:nth-child(4),#t td:nth-child(4){{display:none}}#t th:nth-child(1){{width:82px}}#t th:nth-child(3){{width:92px}}td,th{{padding:8px 6px;overflow-wrap:anywhere}}}}
 </style></head><body><main>
 <h1>Rempart security report</h1><div class="muted">{esc(result.root)} · {result.files_scanned} files · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} · rempart {__version__}</div>
-<div class="cards"><div class="card grade"><span class="muted">Grade</span><b>{grade}</b>{value}/100</div>
+<div class="cards"><div class="card grade"><span class="muted">Grade</span>{f"<b>{grade}</b>{value}/100" if result.complete else "<b>incomplete</b>" + esc(f"{len(result.errors)} scanner error(s)")}</div>
 {''.join(f'<div class="card"><span class="muted">{s.name.title()}</span><b>{counts[s.name]}</b></div>' for s in sorted(Severity, reverse=True))}</div>
 <div class="filters"><select id="sev"><option value="">All severities</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option><option>INFO</option></select>
 <select id="dom"><option value="">All domains</option>{options}</select><input id="q" placeholder="Filter text…"></div>

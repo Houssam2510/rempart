@@ -339,7 +339,7 @@ class History:
         """Store one scan, then learn from what changed since the previous comparable one."""
         from rempart import __version__
 
-        value, grade = score(result.findings)
+        value, grade = score(result.findings) if result.complete else (None, "INCOMPLETE")
         cur = self.db.execute(
             "INSERT INTO scans(project, ts, score, grade, counts, files, duration, version, profile) VALUES (?,?,?,?,?,?,?,?,?)",
             (project, time.time(), value, grade, json.dumps(result.counts()), result.files_scanned, result.duration_s, __version__, profile),

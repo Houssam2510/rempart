@@ -612,7 +612,10 @@ def build_app(root: Path, offline: bool = False, prod_only: bool = False) -> Any
             t.append(" ◆ rempart ", style=f"bold #ffffff on {BRAND}")
             t.append(f"  {root}", style="#cbd5e1")
             res = self.session.result
-            if res is not None:
+            if res is not None and not res.complete:
+                t.append("   ")
+                t.append(f" INCOMPLETE: {len(res.errors)} scanner error(s), no grade ", style="bold #ffffff on #b91c1c")
+            elif res is not None:
                 value, grade = score(res.findings)
                 t.append("   ")
                 t.append(f" {grade} ", style=f"bold #0b0d14 on {GRADE_COLOR[grade]}")
@@ -705,10 +708,15 @@ def build_app(root: Path, offline: bool = False, prod_only: bool = False) -> Any
             res = self.session.result
             assert res is not None
             value, grade = score(res.findings)
-            self.query_one("#score-digits", Digits).update(str(value))
             grade_digits = self.query_one("#grade-digits", Digits)
-            grade_digits.update(grade)
-            grade_digits.styles.color = GRADE_COLOR[grade]
+            if res.complete:
+                self.query_one("#score-digits", Digits).update(str(value))
+                grade_digits.update(grade)
+                grade_digits.styles.color = GRADE_COLOR[grade]
+            else:  # a failed scanner: never show a number that looks like a verdict
+                self.query_one("#score-digits", Digits).update("--")
+                grade_digits.update("")
+                self.notify("\n".join(res.errors)[:400], title="scan incomplete: no grade", severity="error", timeout=15)
             counts = summary_counts(res)
             urgent = counts[Severity.CRITICAL] + counts[Severity.HIGH]
             self.query_one("#grade", Static).update(Text.assemble(

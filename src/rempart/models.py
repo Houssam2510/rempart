@@ -52,6 +52,7 @@ DOMAINS = (
     "quality",
     "performance",
     "web",
+    "scan",  # the scan itself: a scanner that failed, a configuration changed by the code under review
 )
 
 

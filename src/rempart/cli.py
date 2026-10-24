@@ -67,7 +67,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if args.skip:
         names = [n for n in names if n not in {s.strip() for s in args.skip.split(",")}]
     result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline, correlate=False,
-                      verify_secrets=args.verify_secrets)
+                      verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None)
+    result.allow_errors = args.allow_scanner_errors
     # Optional live sources merged into the same result, so attack paths can span code and production.
     if args.aws:
         from rempart.cloud_aws import audit as aws_audit
@@ -76,7 +77,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             result.findings += list(aws_audit(profile=None if args.aws == "default" else args.aws))
             result.scanners.append("cloud-aws")
         except Exception as exc:  # credentials, boto3 missing
-            result.errors.append(f"aws: {exc}")
+            result.add_error("aws", str(exc))
     for image in args.image or []:
         from rempart.images import scan_image
 
@@ -84,7 +85,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
             result.findings += scan_image(image, offline=args.offline)[0]
             result.scanners.append(f"image:{image}")
         except Exception as exc:  # registry/network/archive errors
-            result.errors.append(f"image {image}: {exc}")
+            result.add_error(f"image {image}", str(exc))
     if args.git_history:
         from rempart.continuous import scan_git_history
 
@@ -146,7 +147,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return _exit_code(result, args.fail_on or (config.fail_on.name if config.fail_on else None))
 
 
+EXIT_INCOMPLETE = 3  # a scanner failed, timed out or skipped its domain: the scan cannot vouch for anything
+
+
 def _exit_code(result: ScanResult, fail_on: str | None) -> int:
+    if not result.complete and not result.allow_errors:
+        return EXIT_INCOMPLETE
     if not fail_on:
         return 0
     threshold = Severity.parse(fail_on)
@@ -179,6 +185,9 @@ def _render(findings: list, root: str, args: argparse.Namespace, header: str = "
 
     findings.sort(key=lambda f: -f.risk)
     result = ScanResult(root=root, findings=findings, files_scanned=0, duration_s=duration, scanners=list(scanners))
+    # a live check the account would not let us run is a hole in the audit, not a pass
+    result.errors = [f"{f.rule.id}: {f.message}" for f in findings if f.rule.id.endswith("-CHECK-SKIPPED")]
+    result.allow_errors = getattr(args, "allow_scanner_errors", False)
     if args.format == "console":
         if header:
             print(header)
@@ -445,11 +454,11 @@ def cmd_history(args: argparse.Namespace) -> int:
     if not scans:
         print("No scans recorded for this project yet.")
         return 0
-    print(f"{'date':<17} {'score':>5} grade  crit high  med  low  files")
+    print(f"{'date':<17} {'score':>5}   {'grade':<10} crit high  med  low  files")
     for s in reversed(scans):
         c = s["counts"]
         assert isinstance(c, dict)
-        print(f"{datetime.fromtimestamp(float(s['ts'])).strftime('%Y-%m-%d %H:%M'):<17} {s['score']:>5}   {s['grade']}   {c.get('CRITICAL', 0):>4} {c.get('HIGH', 0):>4} {c.get('MEDIUM', 0):>4} {c.get('LOW', 0):>4}  {s['files']:>5}")
+        print(f"{datetime.fromtimestamp(float(s['ts'])).strftime('%Y-%m-%d %H:%M'):<17} {s['score'] if s['score'] is not None else '-':>5}   {s['grade']:<10} {c.get('CRITICAL', 0):>4} {c.get('HIGH', 0):>4} {c.get('MEDIUM', 0):>4} {c.get('LOW', 0):>4}  {s['files']:>5}")
     mttr = hist.mttr_days(project)
     if mttr is not None:
         print(f"\nMean time to remediate: {mttr} days")
@@ -570,6 +579,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-severity", default="low", choices=[x.name.lower() for x in Severity])
     s.add_argument("--limit", type=int, default=60, help="max findings printed on the console")
     s.add_argument("--no-history", action="store_true", help="do not record this scan or apply learned verdicts")
+    s.add_argument("--scanner-timeout", type=float, default=1800, metavar="SECONDS",
+                   help="a scanner running longer counts as failed (default 1800; 0 disables the limit)")
+    s.add_argument("--allow-scanner-errors", action="store_true",
+                   help="accept an incomplete scan: a failed, timed-out or skipped scanner no longer forces exit code 3")
     s.add_argument("-v", "--verbose", action="store_true", help="show remediation and framework mappings")
     s.set_defaults(func=cmd_scan)
 
@@ -615,6 +628,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--min-severity", default=min_sev, choices=[x.name.lower() for x in Severity])
         sp.add_argument("--limit", type=int, default=60)
         sp.add_argument("-v", "--verbose", action="store_true")
+        sp.add_argument("--allow-scanner-errors", action="store_true", help="a check that could not run no longer forces exit code 3")
 
     im = sub.add_parser("image", help="scan a container image from a registry or a docker-save/OCI tar (no Docker needed)")
     im.add_argument("image", help="e.g. python:3.12-slim, ghcr.io/org/app@sha256:..., or ./image.tar")
