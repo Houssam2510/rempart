@@ -1073,6 +1073,51 @@ spec:
         self.assertEqual(sev, {"alloy.go": "LOW", "proxy.py": "LOW", "local_db.py": "LOW", "remote_db.py": "HIGH"})
 
 
+    def test_sql_built_only_from_constants_is_not_injection(self):
+        mod = """import sqlite3
+from flask import request
+
+TABLES = {"scans": {"version": "TEXT"}, "verdicts": {"scope": "TEXT"}}
+RANK = "CASE {col} WHEN 'human' THEN 3 ELSE 1 END"
+db = sqlite3.connect("a.db")
+
+
+def migrate():
+    for table, columns in TABLES.items():
+        db.execute(f"PRAGMA table_info({table})")  # const
+        for name, decl in columns.items():
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")  # const
+
+
+def evidence(project, before):
+    where = []
+    if project:
+        where.append("project = ?")
+    if before:
+        where.append("ts < ?")
+    db.execute("SELECT * FROM verdicts" + (" WHERE " + " AND ".join(where) if where else ""))  # const
+    db.execute(f"UPDATE v SET x = 1 WHERE {RANK.format(col='source')} >= 2")  # const
+    db.execute("SELECT * FROM t" + (" WHERE p = ?" if project else ""))  # const
+
+
+def by_name(column):
+    return db.execute(f"SELECT {column} FROM t")  # unknown
+
+
+def search():
+    return db.execute(f"SELECT * FROM t WHERE name = '{request.args['q']}'")  # request
+"""
+        found = self.findings({"store.py": mod})
+        sqli = {f.line: f.severity.name for f in found if f.rule.id == "CODE-SQL-INJECTION"}
+        for n, line in enumerate(mod.splitlines(), 1):
+            if line.endswith("# const"):
+                self.assertNotIn(n, sqli, line)
+            elif line.endswith("# unknown"):
+                self.assertEqual(sqli.get(n), "MEDIUM", line)
+            elif line.endswith("# request"):
+                self.assertEqual(sqli.get(n), "CRITICAL", line)
+
+
 
 if __name__ == "__main__":
     unittest.main()

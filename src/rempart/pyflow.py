@@ -59,6 +59,17 @@ class Val:
 CLEAN = Val()
 
 
+def _constant_container(v: Val) -> bool:
+    """A dict, list or tuple whose every key and element is a known constant."""
+    if v.taint:
+        return False
+    if v.has_const() or v.constant_like():
+        return True
+    if v.keys is not None:
+        return all(not isinstance(k, Val) and _constant_container(kv) for k, kv in v.keys)
+    return v.items is not None and all(_constant_container(e) for e in v.items)
+
+
 def lead(v: Val) -> str:
     """The literal beginning of a string value: all of it for a constant, else its known prefix."""
     return v.const if isinstance(v.const, str) else v.prefix
@@ -220,6 +231,7 @@ class ModuleScope:
     aliases: dict[str, str] = field(default_factory=dict)  # local name -> qualified name
     functions: set[str] = field(default_factory=set)
     classes: set[str] = field(default_factory=set)
+    constants: dict[str, ast.expr] = field(default_factory=dict)  # module names bound once to a literal
 
 
 def module_name(rel: str) -> str:
@@ -229,16 +241,38 @@ def module_name(rel: str) -> str:
     return ".".join(p for p in parts if p)
 
 
+def _is_literal(node: ast.expr) -> bool:
+    try:
+        ast.literal_eval(node)
+        return True
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+
+
 def scope_of(rel: str, tree: ast.Module) -> ModuleScope:
     mod = module_name(rel)
     is_package = rel.replace("\\", "/").endswith("__init__.py")
     package = mod if is_package else mod.rpartition(".")[0]
     scope = ModuleScope(module=mod)
+    bound: dict[str, int] = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scope.functions.add(node.name)
         elif isinstance(node, ast.ClassDef):
             scope.classes.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                for n in ast.walk(t):
+                    if isinstance(n, ast.Name):
+                        bound[n.id] = bound.get(n.id, 0) + (2 if isinstance(node, ast.AugAssign) else 1)
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and len(targets) == 1 and isinstance(targets[0], ast.Name) \
+                    and node.value is not None and _is_literal(node.value):
+                scope.constants[targets[0].id] = node.value
+    # a name rebound at module level or declared global in a function is not a constant
+    rebound = {n for n, c in bound.items() if c > 1} | {g for node in ast.walk(tree) if isinstance(node, ast.Global) for g in node.names}
+    for n in rebound:
+        scope.constants.pop(n, None)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
@@ -389,6 +423,9 @@ class FunctionFlow:
                 return Val(taint=frozenset({USER, SRC} if self.summarising else {USER}), derived=frozenset({"request"}))
             v = self.env.get(node.id)
             if v is None:
+                literal = self.scope.constants.get(node.id)
+                if literal is not None and node.id not in self.local_names:
+                    return self.ev(literal, check)  # a module constant (bound once to a literal)
                 return CLEAN
             return replace(v, derived=v.derived | {node.id})
         if isinstance(node, ast.JoinedStr):
@@ -405,7 +442,9 @@ class FunctionFlow:
                     known += p.prefix
                     break
                 known += str(p.const)
-            return replace(j, const=_NOCONST, prefix=known, flags=j.flags | {"dyn"} if any(not p.has_const() for p in parts) else j.flags)
+            dynamic = any(not p.constant_like() or p.taint for p in parts)
+            flags = j.flags | {"dyn"} if dynamic else (j.flags | {"constlike"}) - {"dyn"}
+            return replace(j, const=_NOCONST, prefix=known, flags=flags)
         if isinstance(node, ast.FormattedValue):
             return self.ev(node.value, check)
         if isinstance(node, ast.BinOp):
@@ -424,7 +463,9 @@ class FunctionFlow:
             j = join(taint_of(left), taint_of(right))
             prefix = lead(left) + (lead(right) if left.has_const() else "") if isinstance(node.op, ast.Add) else ""
             keep = left.flags & {"samehost"} if isinstance(node.op, ast.Add) else frozenset()  # appending to a path of this site
-            return replace(j, const=_NOCONST, prefix=prefix, flags=j.flags | keep | ({"dyn"} if not (left.has_const() and right.has_const()) else set()))
+            if left.constant_like() and right.constant_like() and not (left.taint or right.taint):
+                return replace(j, const=_NOCONST, prefix=prefix, flags=(j.flags | keep | {"constlike"}) - {"dyn"})
+            return replace(j, const=_NOCONST, prefix=prefix, flags=j.flags | keep | {"dyn"})
         if isinstance(node, ast.UnaryOp):
             v = self.ev(node.operand, check)
             if v.has_const():
@@ -463,6 +504,8 @@ class FunctionFlow:
             if all(e.has_const() for e in elems) and not isinstance(node, ast.Set):
                 consts = [e.const for e in elems]
                 return Val(const=consts if isinstance(node, ast.List) else tuple(consts), items=elems, flags=flags)
+            if all(e.constant_like() and not e.taint for e in elems):
+                flags |= {"constlike"}
             return Val(items=elems, flags=flags, taint=frozenset().union(*(e.taint for e in elems)) if elems else frozenset())
         if isinstance(node, ast.Dict):
             entries = []
@@ -543,10 +586,15 @@ class FunctionFlow:
             return None
         if method in ("append", "add") and args:
             if cur.items is not None:
-                flags = cur.flags | ({"shell"} if _shell_argv(cur.items + (args[0],)) else set())
-                self.env[recv_name] = Val(items=cur.items + (args[0],), flags=frozenset(flags), taint=cur.taint | args[0].taint)
+                items = cur.items + (args[0],)
+                flags = cur.flags | ({"shell"} if _shell_argv(items) else set())
+                flags = flags | {"constlike"} if all(e.constant_like() and not e.taint for e in items) else flags - {"constlike"}
+                self.env[recv_name] = Val(items=items, flags=frozenset(flags), taint=cur.taint | args[0].taint)
             else:
-                self.env[recv_name] = join(cur, taint_of(args[0]))
+                merged = join(cur, taint_of(args[0]))
+                if cur.constant_like() and args[0].constant_like() and not (cur.taint or args[0].taint):
+                    merged = replace(merged, flags=merged.flags | {"constlike"})  # still a list of constants
+                self.env[recv_name] = merged
             return CLEAN
         if method == "insert" and len(args) == 2 and cur.items is not None and args[0].has_const() and isinstance(args[0].const, int):
             items = list(cur.items)
@@ -690,6 +738,9 @@ class FunctionFlow:
                     return const(getattr(recv.const, short)(*(a.const for a in args)))
                 except Exception:  # noqa: BLE001
                     pass
+            if recv.constant_like() and all(a.constant_like() for a in [*args, *kwargs.values()]) and not (
+                    recv.taint or any(a.taint for a in [*args, *kwargs.values()])):
+                return Val(flags=frozenset({"constlike"}) | (recv.flags & {"samehost"}))  # built only from constants
             j = join(taint_of(recv), *(taint_of(a) for a in args)) if short in ("format", "join", "replace") else taint_of(recv)
             prefix = recv.const.split("{", 1)[0] if short == "format" and isinstance(recv.const, str) else ""
             keep = recv.flags & {"samehost"}  # editing a path of this site keeps it on this site
@@ -1047,7 +1098,14 @@ class FunctionFlow:
                 self.env = env
         elif isinstance(s, (ast.For, ast.AsyncFor)):
             it = self.ev(s.iter)
-            self._assign(s.target, taint_of(it) if it.items is None else join(*it.items) if it.items else CLEAN, s)
+            base = it
+            if isinstance(s.iter, ast.Call) and isinstance(s.iter.func, ast.Attribute) and s.iter.func.attr in ("items", "keys", "values") \
+                    and not s.iter.args:
+                base = self.ev(s.iter.func.value)
+            if not it.taint and (it.has_const() or it.constant_like() or _constant_container(base)):
+                self._assign(s.target, Val(flags=frozenset({"constlike"})), s)  # iterating a constant container
+            else:
+                self._assign(s.target, taint_of(it) if it.items is None else join(*it.items) if it.items else CLEAN, s)
             before = dict(self.env)
             for _ in range(2):
                 env, _term = self._branch(s.body)

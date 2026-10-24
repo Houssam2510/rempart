@@ -21,7 +21,7 @@ except ImportError:
 APP = '''import os
 from flask import request
 
-OPS = {"add": "1 + 1", "mul": "2 * 3"}
+OPS = dict(add="1 + 1", mul="2 * 3")  # built by a call, so the static layer cannot settle the eval below (since R6 it can for a literal)
 
 
 def calc():
