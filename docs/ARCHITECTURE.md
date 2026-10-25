@@ -96,6 +96,10 @@ JSON-RPC 2.0 over stdio, newline-delimited. It implements `initialize` (protocol
 | `quality.py` | AST complexity, fail-open handlers, N+1 detection inside loop bodies. |
 | `web.py` | `http.client` + `ssl`: redirects, headers, cookies, legacy TLS probes, certificate expiry, security.txt, warm/cold TTFB. |
 
+## Default profile and experimental parts
+
+`scanners.scanner_names()` gives the scanners of a scan: every scanner except those in `EXPERIMENTAL_SCANNERS` (`quality`), unless `--experimental` is set or one is named with `--only`. `run_scan(..., experimental=False)` also drops findings of `engine.EXPERIMENTAL_DOMAINS` (quality, performance) produced by other scanners, before file kinds and correlation, and counts them in `ScanResult.experimental_hidden`. The CLI, `watch`, `agent`, the TUI and the MCP server use this profile; `run_scan()` itself keeps everything by default, so `rempart bench` and the tests still measure the experimental domains. Live cloud, images and the web audit were already opt-in; they are labelled experimental and their findings carry `extra["experimental"]`.
+
 ## File kinds (`filekind.py`)
 
 After the scanners run, every finding's file is classified from its path (and, for JavaScript/CSS, whether its lines are minified): `app`, `test`, `dev` (settings/dev*, *.local.*, compose files that run a development server or mount the source tree, `*initdb.d/`, seeds), `example` (examples/, samples/, demo/, docs/ code), `vendored` (vendor/, third_party/, static/**/lib/, bundles, minified files) or `docs` (prose). Vendored files lose their code, data, quality, performance and AI findings; prose loses code, data, quality and performance findings; dev and example findings drop one level (provider-format credentials in dev files keep theirs; secrets in example paths are lowered once, by the secrets scanner). Only `app` findings can be a stage of an attack path. The heuristics are listed in the module docstring (AUDIT.md R4).

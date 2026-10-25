@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <b>One scan across code, dependencies, container images, your live AWS, Google Cloud and Azure accounts, Kubernetes, data stores, CI/CD and AI agents.<br>
+  <b>One scan across code, dependencies, secrets, Terraform, containers, Kubernetes, CI/CD, data stores and AI agents. Live cloud accounts, container images, websites and quality/performance checks are experimental options.<br>
   Findings are correlated into attack paths, every result says how it was proven, an AI agent reviews the code behind them, and the tool learns from your triage.</b>
 </p>
 
@@ -70,13 +70,14 @@ pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # ext
 | Scan a repository | `rempart scan .` |
 | Scan, browse, triage and teach in an interactive terminal interface | `rempart tui .` |
 | See every domain fire on a demo app | `rempart scan examples/vulnerable-app --offline` |
-| Correlate code **and** production | `rempart scan . --aws --image myorg/api:latest` |
-| Audit a container image, **no Docker needed** | `rempart image python:3.9-slim` |
-| Audit your live AWS account (read-only) | `rempart cloud aws --profile prod` |
+| Also run the 🧪 experimental quality and performance checks | `rempart scan . --experimental` |
+| 🧪 Correlate code **and** production | `rempart scan . --aws --image myorg/api:latest` |
+| 🧪 Audit a container image, **no Docker needed** | `rempart image python:3.9-slim` |
+| 🧪 Audit your live AWS account (read-only) | `rempart cloud aws --profile prod` |
 | Audit a live Kubernetes cluster | `rempart k8s --context prod` |
 | Check whether leaked keys still work | `rempart scan . --verify-secrets` |
-| Audit a website you own (passive) | `rempart web https://your-site.example` |
-| Audit Google Cloud or Azure (read-only, via `gcloud` / `az`) | `rempart cloud gcp --project my-proj` · `rempart cloud azure` |
+| 🧪 Audit a website you own (passive) | `rempart web https://your-site.example` |
+| 🧪 Audit Google Cloud or Azure (read-only, via `gcloud` / `az`) | `rempart cloud gcp --project my-proj` · `rempart cloud azure` |
 | Judge a PR only on what it adds | `rempart scan . --baseline origin/main --fail-on high` |
 | Find secrets deleted from files but still in git history | `rempart scan . --git-history --verify-secrets` |
 | Ignore build/test-only dependencies | `rempart scan . --prod-only` |
@@ -89,6 +90,8 @@ pipx install "rempart[all] @ git+https://github.com/Houssam2510/rempart"   # ext
 | Gate CI on severity | `rempart scan . --fail-on high -f sarif -o rempart.sarif --also md:summary.md` |
 
 The core needs only Python 3.11 and PyYAML. No account, no telemetry.
+
+🧪 **Experimental** means that how precise it is on real code has not been measured yet. By default `rempart scan` (and `watch`, `agent`, `tui`, the MCP server) runs code, dependencies, secrets, IaC, containers, Kubernetes, CI/CD, data and AI checks, attack paths and learning. Quality and performance checks run only with `--experimental` (or `--only quality`); live AWS, images and the `cloud`, `image` and `web` commands run only when you call them, print a notice, and mark their findings `"experimental": true` in JSON. Nothing was removed.
 
 ## 🖥️ Terminal interface
 
@@ -117,7 +120,7 @@ Verdicts, fixes and knowledge made in the interface teach the CLI too: it is the
 
 ```mermaid
 flowchart LR
-    IN["WHAT IT READS<br/>repository + git history · container image<br/>live AWS · GCP · Azure · Kubernetes · website"]
+    IN["WHAT IT READS<br/>repository + git history<br/>experimental: container image · live AWS · GCP · Azure · website"]
     SC["10 REPOSITORY SCANNERS<br/>+ image, cloud and web commands<br/>319 rules · 17 domains"]
     IQ["INTELLIGENCE<br/>inter-procedural data flow · reachability<br/>live verification · resource graph<br/>AI agent · learning per context"]
     OUT["OUTPUTS<br/>terminal · HTML · SARIF<br/>JSON · Markdown · MCP"]
@@ -221,17 +224,17 @@ What an assistant records is **evidence, not a decision**: `rempart_triage` stor
 | 🧬 **Code** | SQL/NoSQL/command/code/template injection, XSS sinks, SSRF, path traversal, open redirect, deserialization, JWT `none`, weak crypto, mass assignment, CORS, uploads, ReDoS, Trojan Source, IDOR queue. Python AST + JS/TS/Svelte/Vue, Go, Java/Kotlin, PHP, Ruby, C#, C/C++ | OWASP A01–A10:2025, CWE Top 25 |
 | 🔑 **Secrets** | 45 token formats, private keys, entropy-filtered literals, committed `.env`, **git history** of every branch; live checks for 24 providers | CWE-798 |
 | 📦 **Dependencies** | 12 lockfile formats → OSV + KEV + EPSS, dev/prod scope, vulnerable-function reachability, upgrade plan, malicious releases, typosquats, dependency confusion, install scripts | A03:2025 |
-| 🐳 **Images** | Registry pull without Docker, whiteout-aware layers, dpkg/apk/**RPM** (Rocky, Alma) via OSV, Python & npm, **Go binaries** (build info), **JAR/WAR** incl. nested Spring Boot jars, EOL OS and runtimes, secrets in files/ENV/history | A03/A06:2025 |
-| ☁️ **Live cloud** | AWS: 28 read-only checks (IAM, S3, security groups, IMDSv1, EBS, RDS, CloudTrail, GuardDuty, KMS, Lambda, EKS…). Google Cloud: 13 (public IAM, primitive roles on service accounts, old keys, public buckets, open firewall, Cloud SQL, default compute SA). Azure: 9 (anonymous blobs, HTTP, TLS, NSG, SQL firewall, Key Vault, Owner service principals) | CIS AWS / GCP / Azure Foundations |
+| 🐳 **Images** 🧪 | Registry pull without Docker, whiteout-aware layers, dpkg/apk/**RPM** (Rocky, Alma) via OSV, Python & npm, **Go binaries** (build info), **JAR/WAR** incl. nested Spring Boot jars, EOL OS and runtimes, secrets in files/ENV/history | A03/A06:2025 |
+| ☁️ **Live cloud** 🧪 | AWS: 28 read-only checks (IAM, S3, security groups, IMDSv1, EBS, RDS, CloudTrail, GuardDuty, KMS, Lambda, EKS…). Google Cloud: 13 (public IAM, primitive roles on service accounts, old keys, public buckets, open firewall, Cloud SQL, default compute SA). Azure: 9 (anonymous blobs, HTTP, TLS, NSG, SQL firewall, Key Vault, Owner service principals) | CIS AWS / GCP / Azure Foundations |
 | ☸️ **Kubernetes** | Manifests and live clusters: privileged pods, host namespaces, hostPath, capabilities, RBAC escalation, cluster-admin, exposed data services | OWASP K8s Top 10 (2025) |
 | 🏗️ **IaC** | Terraform AWS/GCP/Azure incl. `jsonencode()` policies, state committed | CIS, A02/A04:2025 |
 | ⚙️ **CI/CD** | Pwn requests, script injection, unpinned actions, cache poisoning, OIDC on untrusted triggers, long-lived publish tokens | OWASP CICD-SEC-1…10 |
 | 🗄️ **Data** | Connection-string credentials, DB without TLS, exposed MongoDB/Redis/Postgres/MySQL/Elasticsearch, Supabase RLS, Firebase rules, PII & card numbers, sensitive logs | Québec Law 25, PIPEDA, GDPR, PCI DSS |
 | 🧠 **AI & agents** | Unpinned MCP servers, secrets in MCP configs, invisible Unicode in assistant instruction files, LLM output to sinks, shell-executing tools | OWASP LLM 2025, Agentic 2026 |
-| 🧹 **Quality & perf** | Fail-open auth, swallowed exceptions, N+1 queries, missing timeouts, unbounded queries, blocking I/O | A10:2025 |
-| 🌐 **Web (passive)** | HTTPS, HSTS, CSP, framing, cookies, CORS, banners, legacy TLS, certificate expiry, `security.txt`, cold/warm TTFB | A02/A04/A07:2025 |
+| 🧹 **Quality & perf** 🧪 | Fail-open auth, swallowed exceptions, N+1 queries, missing timeouts, unbounded queries, blocking I/O | A10:2025 |
+| 🌐 **Web (passive)** 🧪 | HTTPS, HSTS, CSP, framing, cookies, CORS, banners, legacy TLS, certificate expiry, `security.txt`, cold/warm TTFB | A02/A04/A07:2025 |
 
-**Where the 319 rules apply** (`rempart rules`): **233** run in a repository scan (`rempart scan`), 52 of them for secrets, 39 for code, 31 for Terraform, 18 for data stores, 17 each for CI/CD and Kubernetes, 12 for containers, 10 for AI agents, 19 for quality and performance, 9 attack paths, 6 for the supply chain and 3 for dependencies (`DEP-VULNERABLE` carries every CVE). **68** run only against a live account or site (AWS 29, Google Cloud and Azure 22, web 17), **11** only on container images, and **7** are technical notices (`*-CHECK-SKIPPED`, `CTX-*`, `SCANNER-ERROR`, `REMPART-CONFIG-CHANGED`). The 17th domain, `scan`, only reports an incomplete scan.
+**Where the 319 rules apply** (`rempart rules`): **233** run in a repository scan (`rempart scan`), 52 of them for secrets, 39 for code, 31 for Terraform, 18 for data stores, 17 each for CI/CD and Kubernetes, 12 for containers, 10 for AI agents, 19 for quality and performance (🧪 off by default), 9 attack paths, 6 for the supply chain and 3 for dependencies (`DEP-VULNERABLE` carries every CVE). **68** run only against a live account or site (AWS 29, Google Cloud and Azure 22, web 17, 🧪 all of them), **11** only on container images (🧪), and **7** are technical notices (`*-CHECK-SKIPPED`, `CTX-*`, `SCANNER-ERROR`, `REMPART-CONFIG-CHANGED`). The 17th domain, `scan`, only reports an incomplete scan.
 
 The full research is in **[docs/THREAT_CATALOG.md](docs/THREAT_CATALOG.md)**: every threat class, the 2025-2026 incidents behind it, and an honest list of what static analysis cannot see. All rules: [docs/RULES.md](docs/RULES.md).
 
@@ -319,6 +322,7 @@ An earlier version of this page claimed "precision 8 % → 80 % on 10 private re
 - **Links between code and cloud** are proven when the repository says what runs where (an image built here referenced by a workload, a Terraform reference). Live AWS/GCP/Azure findings are not yet tied to repository resources, so those chains stay correlated.
 - **Logic flaws** (IDOR, business-flow abuse) are a review queue, not verdicts.
 - **Images**: RPM databases in the older BerkeleyDB format (RHEL 7/8) and Red Hat's own advisory feed are not covered.
+- **Experimental parts** (🧪: live cloud, images, web, quality and performance) have no precision measurement on real code. The cloud checks are tested against recorded API answers, never against a real account in CI. They are off by default for that reason.
 - **The web mode is passive.** It is not a penetration test, and proof tests are written, never run.
 
 ## 🛣️ Roadmap
