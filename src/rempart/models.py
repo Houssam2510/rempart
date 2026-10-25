@@ -146,5 +146,6 @@ class Finding:
             "references": list(self.rule.references),
             "learned_note": self.learned_note,
             "verification": self.verification,
+            "experimental": bool(self.extra.get("experimental")),
             "extra": {k: v for k, v in self.extra.items() if k != "anchor"},
         }

@@ -48,7 +48,7 @@ def _scan_profile(root: Path, kind: str, **options: object) -> str:
 def cmd_scan(args: argparse.Namespace) -> int:
     from rempart.history import History
     from rempart.reporters import RENDERERS, render_console
-    from rempart.scanners import ALL_SCANNERS
+    from rempart.scanners import ALL_SCANNERS, EXPERIMENTAL_SCANNERS, scanner_names, wants_experimental
 
     root = Path(args.path).resolve()
     if not root.is_dir():
@@ -69,37 +69,40 @@ def cmd_scan(args: argparse.Namespace) -> int:
         config = Config.load(root)
     if getattr(args, "prod_only", False):
         config.prod_only = True
-    names = list(ALL_SCANNERS)
-    if args.only:
-        names = [n.strip() for n in args.only.split(",")]
-        unknown = [n for n in names if n not in ALL_SCANNERS]
-        if unknown:
-            print(f"rempart: unknown scanner(s) {unknown}; choose from {list(ALL_SCANNERS)}", file=sys.stderr)
-            return 2
-    if args.skip:
-        names = [n for n in names if n not in {s.strip() for s in args.skip.split(",")}]
+    names = scanner_names(args.only, args.skip, args.experimental)
+    unknown = [n for n in names if n not in ALL_SCANNERS]
+    if unknown:
+        print(f"rempart: unknown scanner(s) {unknown}; choose from {list(ALL_SCANNERS)}", file=sys.stderr)
+        return 2
+    experimental = wants_experimental(names, args.experimental)
+    if experimental:
+        _experimental_notice("quality/performance")
     if args.verify_secrets:
         from rempart.verify import WARNING
 
         print(f"rempart: {WARNING}", file=sys.stderr)
     result = run_scan(root, [ALL_SCANNERS[n] for n in names], config, offline=args.offline, correlate=False,
-                      verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None, knowledge=knowledge)
+                      verify_secrets=args.verify_secrets, scanner_timeout=args.scanner_timeout or None, knowledge=knowledge,
+                      experimental=experimental)
+    result.scanners = [f"{n} (experimental)" if n in EXPERIMENTAL_SCANNERS else n for n in result.scanners]
     result.allow_errors = args.allow_scanner_errors
     # Optional live sources merged into the same result, so attack paths can span code and production.
     if args.aws:
         from rempart.cloud_aws import audit as aws_audit
 
+        _experimental_notice("the live AWS audit")
         try:
-            result.findings += list(aws_audit(profile=None if args.aws == "default" else args.aws))
-            result.scanners.append("cloud-aws")
+            result.findings += _mark_experimental(list(aws_audit(profile=None if args.aws == "default" else args.aws)))
+            result.scanners.append("cloud-aws (experimental)")
         except Exception as exc:  # credentials, boto3 missing
             result.add_error("aws", str(exc))
     for image in args.image or []:
         from rempart.images import scan_image
 
+        _experimental_notice(f"the image scan of {image}")
         try:
-            result.findings += scan_image(image, offline=args.offline)[0]
-            result.scanners.append(f"image:{image}")
+            result.findings += _mark_experimental(scan_image(image, offline=args.offline)[0])
+            result.scanners.append(f"image:{image} (experimental)")
         except Exception as exc:  # registry/network/archive errors
             result.add_error(f"image {image}", str(exc))
     if args.git_history:
@@ -118,7 +121,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
         scanners = [ALL_SCANNERS[n] for n in names]
         try:
-            known = baseline_fingerprints(root, args.baseline, lambda p: run_scan(p, scanners, config, offline=args.offline, correlate=False).findings)
+            known = baseline_fingerprints(root, args.baseline, lambda p: run_scan(p, scanners, config, offline=args.offline, correlate=False,
+                                                                                    experimental=experimental).findings)
         except Exception as exc:  # unknown ref, not a git repository
             print(f"rempart: cannot scan baseline {args.baseline!r}: {exc}", file=sys.stderr)
             return 2
@@ -138,7 +142,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
         result.add_attack_paths()
         profile = _scan_profile(root, "scan", only=args.only, skip=args.skip, offline=args.offline, aws=args.aws,
                                 image=",".join(args.image or []), git_history=args.git_history, baseline=args.baseline,
-                                prod_only=args.prod_only, verify_secrets=args.verify_secrets, trust_config=trust)
+                                prod_only=args.prod_only, verify_secrets=args.verify_secrets, trust_config=trust,
+                                experimental=experimental)
         scan_id = hist.record(project, result, profile)
         diff = hist.diff_with_previous(project, scan_id)
         hist.close()
@@ -186,6 +191,19 @@ def _config_changes(root: Path, ref: str, trust: str) -> list:
     return out
 
 
+EXPERIMENTAL_NOTE = "experimental: precision on real code not established (see README, Limits)"
+
+
+def _experimental_notice(what: str) -> None:
+    print(f"rempart: {what} is {EXPERIMENTAL_NOTE}.", file=sys.stderr)
+
+
+def _mark_experimental(findings: list) -> list:
+    for f in findings:
+        f.extra["experimental"] = True
+    return findings
+
+
 EXIT_INCOMPLETE = 3  # a scanner failed, timed out or skipped its domain: the scan cannot vouch for anything
 
 
@@ -202,6 +220,7 @@ def cmd_web(args: argparse.Namespace) -> int:
     from rempart.reporters import RENDERERS, render_console
     from rempart.web import audit
 
+    _experimental_notice("the web audit")
     try:
         findings, meta = audit(args.url)
     except Exception as exc:  # network errors of every kind end here
@@ -245,6 +264,7 @@ def cmd_image(args: argparse.Namespace) -> int:
     from rempart.images import scan_image
     from rempart.netcache import NetworkError
 
+    _experimental_notice("the image scan")
     try:
         findings, meta = scan_image(args.image, platform=args.platform, offline=args.offline, max_mb=args.max_mb)
     except (NetworkError, ValueError, OSError) as exc:
@@ -255,6 +275,7 @@ def cmd_image(args: argparse.Namespace) -> int:
 
 
 def cmd_cloud(args: argparse.Namespace) -> int:
+    _experimental_notice(f"the live {args.provider} audit")
     if args.provider in ("gcp", "azure"):
         from rempart.cloud_multi import audit_azure, audit_gcp
 
@@ -290,16 +311,15 @@ def cmd_k8s(args: argparse.Namespace) -> int:
 
 def cmd_watch(args: argparse.Namespace) -> int:
     from rempart.continuous import watch
-    from rempart.scanners import ALL_SCANNERS
+    from rempart.scanners import ALL_SCANNERS, scanner_names, wants_experimental
 
     root = Path(args.path).resolve()
     config = Config.load(root)
-    names = list(ALL_SCANNERS)
-    if args.only:
-        names = [n.strip() for n in args.only.split(",")]
+    names = scanner_names(args.only, None, args.experimental)
+    experimental = wants_experimental(names, args.experimental)
     scanners = [ALL_SCANNERS[n] for n in names]
     try:
-        watch(root, lambda p: run_scan(p, scanners, config, offline=not args.with_network).findings,
+        watch(root, lambda p: run_scan(p, scanners, config, offline=not args.with_network, experimental=experimental).findings,
               interval=args.interval, min_severity=Severity.parse(args.min_severity))
     except KeyboardInterrupt:
         pass
@@ -332,11 +352,11 @@ def cmd_agent(args: argparse.Namespace) -> int:
     from rempart.engine import discover
     from rempart.history import History
     from rempart.reporters import render_console
-    from rempart.scanners import ALL_SCANNERS
+    from rempart.scanners import ALL_SCANNERS, scanner_names
 
     root = Path(args.path).resolve()
     config = Config.load(root)
-    result = run_scan(root, list(ALL_SCANNERS.values()), config, offline=args.offline, correlate=False)
+    result = run_scan(root, [ALL_SCANNERS[n] for n in scanner_names()], config, offline=args.offline, correlate=False, experimental=False)
     hist = History()
     project = hist.for_root(root)
     result.findings, _ = hist.apply_knowledge(project, result.findings)
@@ -610,8 +630,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--skip", help="comma-separated scanners to skip")
     s.add_argument("--offline", action="store_true", help="no network: skip OSV/KEV/EPSS lookups")
     s.add_argument("--aws", nargs="?", const="default", metavar="PROFILE",
-                   help="also audit the live AWS account (read-only) and correlate it with the code")
-    s.add_argument("--image", action="append", metavar="REF", help="also scan this container image (repeatable)")
+                   help="experimental: also audit the live AWS account (read-only) and correlate it with the code")
+    s.add_argument("--image", action="append", metavar="REF", help="experimental: also scan this container image (repeatable)")
+    s.add_argument("--experimental", action="store_true",
+                   help="also run the experimental quality and performance checks (off by default: precision on real code not established)")
     s.add_argument("--git-history", action="store_true", help="also look for secrets removed from the files but still in past commits")
     s.add_argument("--baseline", metavar="REF", help="only report findings that are not already present at this git revision (e.g. origin/main)")
     s.add_argument("--prod-only", action="store_true", help="ignore dependencies only used to build or test (devDependencies, dev groups)")
@@ -631,7 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-v", "--verbose", action="store_true", help="show remediation and framework mappings")
     s.set_defaults(func=cmd_scan)
 
-    w = sub.add_parser("web", help="passive audit of a deployed site you own")
+    w = sub.add_parser("web", help="experimental: passive audit of a deployed site you own")
     w.add_argument("url")
     w.add_argument("-f", "--format", choices=["console", "json", "sarif", "md", "markdown", "html"], default="console")
     w.add_argument("--fail-on", choices=[x.name.lower() for x in Severity])
@@ -675,7 +697,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("-v", "--verbose", action="store_true")
         sp.add_argument("--allow-scanner-errors", action="store_true", help="a check that could not run no longer forces exit code 3")
 
-    im = sub.add_parser("image", help="scan a container image from a registry or a docker-save/OCI tar (no Docker needed)")
+    im = sub.add_parser("image", help="experimental: scan a container image from a registry or a docker-save/OCI tar (no Docker needed)")
     im.add_argument("image", help="e.g. python:3.12-slim, ghcr.io/org/app@sha256:..., or ./image.tar")
     im.add_argument("--platform", default="linux/amd64")
     im.add_argument("--offline", action="store_true")
@@ -683,7 +705,7 @@ def build_parser() -> argparse.ArgumentParser:
     outputs(im)
     im.set_defaults(func=cmd_image)
 
-    cl = sub.add_parser("cloud", help="live read-only audit of a cloud account (AWS)")
+    cl = sub.add_parser("cloud", help="experimental: live read-only audit of a cloud account (AWS, Google Cloud, Azure)")
     cl.add_argument("provider", choices=["aws", "gcp", "azure"])
     cl.add_argument("--project", help="GCP project id (default: gcloud's configured project)")
     cl.add_argument("--subscription", help="Azure subscription id or name (default: az's current subscription)")
@@ -720,6 +742,7 @@ def build_parser() -> argparse.ArgumentParser:
     wt.add_argument("--interval", type=float, default=20.0, help="seconds between change checks")
     wt.add_argument("--min-severity", default="medium", choices=[x.name.lower() for x in Severity])
     wt.add_argument("--only", help="comma-separated scanners to run")
+    wt.add_argument("--experimental", action="store_true", help="also run the experimental quality and performance checks")
     wt.add_argument("--with-network", action="store_true", help="also query OSV/KEV/EPSS on each change (slower)")
     wt.set_defaults(func=cmd_watch)
 

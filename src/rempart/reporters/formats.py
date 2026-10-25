@@ -24,6 +24,8 @@ def render_json(result: ScanResult) -> str:
         "files_scanned": result.files_scanned,
         "duration_s": result.duration_s,
         "suppressed": result.suppressed,
+        "experimental_checks": not result.experimental_off,
+        "experimental_hidden": result.experimental_hidden,
         "errors": result.errors,
         "findings": [f.to_dict() for f in result.findings],
         "upgrade_plan": upgrade_plan(result.findings),

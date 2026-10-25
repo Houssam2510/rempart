@@ -27,7 +27,8 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
     out = [
         col(f"Rempart — {result.root}", BOLD),
         (f"{result.files_scanned} files · " if result.files_scanned else "") + f"{len(result.scanners)} scanner(s) · {result.duration_s}s"
-        + (f" · {result.suppressed} suppressed" if result.suppressed else ""),
+        + (f" · {result.suppressed} suppressed" if result.suppressed else "")
+        + (" · experimental checks off (--experimental)" if result.experimental_off else ""),
         "",
         col(f"  Posture score {value}/100  grade {grade}", BOLD) if result.complete else
         col(f"  Posture score: INCOMPLETE — {len(result.errors)} scanner error(s), no grade is given", COLORS[Severity.HIGH]),
@@ -49,7 +50,8 @@ def render_console(result: ScanResult, *, limit: int = 60, min_severity: Severit
     for domain, items in sorted(by_domain.items(), key=lambda kv: (kv[0] != "attack-path", -max(x.risk for x in kv[1]))):
         if printed >= limit:
             break
-        out.append(col(f"■ {domain} ({len(items)})", BOLD))
+        tag = " · experimental" if any(x.extra.get("experimental") for x in items) else ""
+        out.append(col(f"■ {domain} ({len(items)}{tag})", BOLD))
         per_pkg: dict[str, int] = {}
         pkg_total: dict[str, int] = {}
         for f in items:

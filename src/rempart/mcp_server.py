@@ -88,16 +88,17 @@ def _inside_roots(path: str) -> Path:
 def tool_scan(args: dict[str, Any]) -> str:
     from rempart.config import Config
     from rempart.engine import run_scan, score
-    from rempart.scanners import ALL_SCANNERS
+    from rempart.scanners import ALL_SCANNERS, scanner_names, wants_experimental
 
     root = _inside_roots(str(args["path"]))
     if not root.is_dir():
         raise ValueError(f"{root} is not a directory")
-    names = [n.strip() for n in str(args.get("scanners") or "").split(",") if n.strip()] or list(ALL_SCANNERS)
+    names = scanner_names(str(args.get("scanners") or "") or None)  # naming an experimental scanner asks for it
     unknown = [n for n in names if n not in ALL_SCANNERS]
     if unknown:
         raise ValueError(f"unknown scanners {unknown}; available: {list(ALL_SCANNERS)}")
-    result = run_scan(root, [ALL_SCANNERS[n] for n in names], Config.load(root), offline=bool(args.get("offline", False)))
+    result = run_scan(root, [ALL_SCANNERS[n] for n in names], Config.load(root), offline=bool(args.get("offline", False)),
+                      experimental=wants_experimental(names))
     _LAST["result"] = result
     value, grade = score(result.findings) if result.complete else (None, None)
     return json.dumps({"root": str(root), "complete": result.complete, "errors": result.errors, "score": value, "grade": grade,

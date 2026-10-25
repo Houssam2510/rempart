@@ -167,6 +167,8 @@ class ScanResult:
     context: list[Finding] = field(default_factory=list)
     graph: Any = None  # rempart.graph.ResourceGraph, when the scan read the repository
     files: list[str] = field(default_factory=list)  # every file the scan read (learning: "still there?")
+    experimental_off: bool = False  # experimental checks were not asked for (no --experimental)
+    experimental_hidden: int = 0  # findings of experimental domains produced by other scanners and left out
     allow_errors: bool = False  # set by --allow-scanner-errors: the caller accepts an incomplete scan
     ignored: list[Finding] = field(default_factory=list)  # silenced by an inline `rempart:ignore` (a learning signal)
     knowledge_digest: str = ""  # what .rempart/knowledge.toml held for this scan
@@ -224,11 +226,18 @@ def score(findings: list[Finding]) -> tuple[int, str]:
     return value, grade
 
 
+# Experimental domains (phase 4 of the October 2026 audit): their precision on real code is
+# not established, so `rempart scan` leaves them out unless --experimental is given. The
+# library default keeps everything, so measurements (bench, tests) still see them.
+EXPERIMENTAL_DOMAINS = ("quality", "performance")
+
+
 def run_scan(
     root: Path,
     scanners: list[Scanner],
     config: Config,
     *,
+    experimental: bool = True,
     offline: bool = False,
     correlate: bool = True,
     verify_secrets: bool = False,
@@ -238,12 +247,13 @@ def run_scan(
 ) -> ScanResult:
     """`progress(step, done, total)`, when given, is called before each scanner runs.
     A scanner that raises or runs longer than `scanner_timeout` seconds becomes a
-    SCANNER-ERROR finding and makes the result incomplete (fail closed)."""
+    SCANNER-ERROR finding and makes the result incomplete (fail closed). With
+    `experimental=False`, quality and performance findings are left out (and counted)."""
     from rempart.knowledge import Knowledge, using
 
     with using(knowledge if knowledge is not None else Knowledge.load(root)) as knowledge:
         result = _run_scan(root, scanners, config, offline=offline, verify_secrets=verify_secrets, progress=progress,
-                           scanner_timeout=scanner_timeout)
+                           scanner_timeout=scanner_timeout, experimental=experimental)
         result.knowledge_digest = knowledge.digest()
         if correlate:
             result.add_attack_paths()
@@ -279,7 +289,8 @@ def _run_scanner(scanner: Scanner, ctx: ScanContext, timeout: float | None) -> l
 
 
 def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: bool, verify_secrets: bool,
-              progress: Callable[[str, int, int], None] | None = None, scanner_timeout: float | None = None) -> ScanResult:
+              progress: Callable[[str, int, int], None] | None = None, scanner_timeout: float | None = None,
+              experimental: bool = True) -> ScanResult:
     start = time.monotonic()
     files, tracked = discover(root, config)
     ctx = ScanContext(root=root, files=files, tracked=tracked, config=config, offline=offline, verify_secrets=verify_secrets)
@@ -317,6 +328,13 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
                 continue
             seen.add(key)
             findings.append(f)
+    hidden = 0
+    for f in [f for f in findings if f.rule.domain in EXPERIMENTAL_DOMAINS]:
+        if experimental:
+            f.extra["experimental"] = True
+        else:
+            findings.remove(f)
+            hidden += 1
     from rempart import filekind
 
     findings, dropped = filekind.apply(findings, ctx.text)  # vendored, docs, dev, example files (AUDIT.md R4)
@@ -336,6 +354,8 @@ def _run_scan(root: Path, scanners: list[Scanner], config: Config, *, offline: b
         graph=build_graph(files, ctx.text),
         files=files,
         ignored=ignored,
+        experimental_off=not experimental,
+        experimental_hidden=hidden,
     )
     for name, message in failures + ctx.errors:
         result.add_error(name, message)

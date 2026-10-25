@@ -1210,6 +1210,67 @@ class R7TerraformValuesTest(IsolatedHome):
         self.assertNotIn("TF-NET-ADMIN-PORT-OPEN", ids({"sg.tf": sg, "variables.tf": private}))
 
 
+class P4ExperimentalTest(IsolatedHome):
+    """Phase 4: live cloud, images, web and quality/performance are experimental, off by default."""
+
+    FILES = {
+        "app.py": "import sqlite3\nfrom flask import Flask, request\n\napp = Flask(__name__)\n\n\n@app.get('/u')\ndef u():\n"
+                  "    try:\n        open('x')\n    except Exception:\n        pass\n"
+                  "    return str(sqlite3.connect('d').execute('SELECT * FROM t WHERE id = ' + request.args['id']).fetchall())\n",
+        "server.js": 'const all = await db.collection("users").find({}).toArray();\n',
+    }
+
+    def scan_json(self, *extra):
+        from rempart.cli import main
+
+        root = self.project(f"p4-{len(list(self.tmp.iterdir()))}", self.FILES)
+        out = self.tmp / f"out-{len(list(self.tmp.iterdir()))}.json"
+        main(["scan", str(root), "--offline", "--no-history", "-f", "json", "-o", str(out), *extra])
+        return json.loads(out.read_text())
+
+    def test_default_scan_leaves_quality_and_performance_out_and_says_so(self):
+        data = self.scan_json()
+        domains = {f["domain"] for f in data["findings"]}
+        self.assertIn("code", domains)
+        self.assertFalse(domains & {"quality", "performance"})
+        self.assertGreater(data["experimental_hidden"], 0)
+
+    def test_experimental_option_turns_them_on_and_labels_them(self):
+        data = self.scan_json("--experimental")
+        domains = {f["domain"] for f in data["findings"]}
+        self.assertTrue({"quality", "performance"} <= domains)
+        self.assertEqual(data["experimental_hidden"], 0)
+        self.assertTrue(all(f.get("experimental") for f in data["findings"] if f["domain"] in ("quality", "performance")))
+        self.assertFalse(any(f.get("experimental") for f in data["findings"] if f["domain"] == "code"))
+
+    def test_options_and_commands_are_marked_experimental(self):
+        from rempart.cli import build_parser
+
+        parser = build_parser()
+        sub = next(a for a in parser._actions if a.dest == "command")
+        scan_help = sub.choices["scan"].format_help()
+        for opt in ("--aws", "--image", "--experimental"):
+            line = scan_help[scan_help.index(opt):scan_help.index(opt) + 400]
+            self.assertIn("experimental", line.lower(), opt)
+        helps = {a.dest: (a.help or "") for a in sub._choices_actions}
+        for cmd in ("cloud", "image", "web"):
+            self.assertIn("experimental", helps[cmd].lower(), cmd)
+
+    def test_every_entry_point_uses_the_default_profile(self):
+        from rempart import mcp_server
+        from rempart.tui import Session
+
+        root = self.project("p4-entry", self.FILES)
+        res = Session(root, offline=True).scan()
+        self.assertFalse({f.rule.domain for f in res.findings} & {"quality", "performance"})
+        mcp_server.configure_roots([self.tmp])
+        try:
+            out = json.loads(mcp_server.tool_scan({"path": str(root), "offline": True, "limit": 100}))
+        finally:
+            mcp_server.configure_roots(None)
+        self.assertFalse([f for f in out["findings"] if f.get("rule", "").startswith(("QUAL-", "PERF-"))])
+
+
 
 if __name__ == "__main__":
     unittest.main()

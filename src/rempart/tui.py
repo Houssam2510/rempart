@@ -92,13 +92,15 @@ class Session:
         """Same pipeline as `rempart scan PATH`: learned knowledge, attack paths, history."""
         from rempart.cli import _scan_profile
         from rempart.history import History
-        from rempart.scanners import ALL_SCANNERS
+        from rempart.scanners import ALL_SCANNERS, scanner_names
 
         config = Config.load(self.root)
         config.prod_only = config.prod_only or self.prod_only
-        result = run_scan(self.root, list(ALL_SCANNERS.values()), config, offline=self.offline, correlate=False, progress=progress)
+        names = scanner_names()  # the default profile of `rempart scan`: experimental checks stay off
+        result = run_scan(self.root, [ALL_SCANNERS[n] for n in names], config, offline=self.offline, correlate=False, progress=progress,
+                          experimental=False)
         if progress is not None:
-            progress("learning and attack paths", len(ALL_SCANNERS), len(ALL_SCANNERS))
+            progress("learning and attack paths", len(names), len(names))
         hist = History()
         try:
             project = hist.for_root(self.root)
