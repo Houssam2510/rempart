@@ -182,3 +182,102 @@ Correctif trouvé en refaisant la capture : la narration des chaînes écrivait 
 | Dogfooding | exit 0 | exit 0 |
 
 Volume par dépôt (CRIT/HIGH/MED/LOW), avant → après P4 : microblog 0/0/3/4 → 0/0/2/2 ; djangoproject.com 0/1/22/28 → 0/1/16/16 ; terraform-aws-eks 0/0/17/14 → 0/0/17/12 ; microservices-demo 2/5/60/122 → 2/5/57/113.
+
+## Phase 5 — contrôle final
+
+### Holdout : scanné une seule fois, rien n'a été corrigé à partir de ses résultats
+
+Les 5 dépôts de `bench/holdout/repos.json` (épinglés en phase 0 par `git ls-remote`, sans cloner ni lire le code) ont été scannés pour la première fois après la phase 4, avec `bench/realworld.py --manifest bench/holdout` sur `bb93ad3`. Le top 10 critique/high de chacun a été étiqueté en lisant le code, avec la méthode de l'audit. Les 18 étiquettes et leurs raisons sont dans `bench/holdout/labels.json`. **Aucun fichier de `src/` n'a changé depuis** : `git diff 8607b92 HEAD -- src` est vide, et `tests/test_realworld.py` le vérifie désormais.
+
+| Dépôt | Temps | CRIT/HIGH/MED/LOW | Top | VP | FP | Discutable | Stricte | Large |
+|---|---|---|---|---|---|---|---|---|
+| CTFd/CTFd | 49,5 s | 0/13/37/24 | 10 | 0 | 7 | 3 | 0 % | 30 % |
+| fastapi/full-stack-fastapi-template | 1,7 s | 1/3/11/4 | 4 | 0 | 1 | 3 | 0 % | 75 % |
+| hagopj13/node-express-boilerplate | 0,4 s | 0/0/1/4 | 0 | — | — | — | n/a | n/a |
+| cloudposse/terraform-aws-rds | 0,3 s | 0/1/7/4 | 1 | 0 | 0 | 1 | 0 % | 100 % |
+| stefanprodan/podinfo | 1,8 s | 2/1/47/46 | 3 | 0 | 1 | 2 | 0 % | 67 % |
+| **Total** | | | **18** | **0** | **9** | **9** | **0 %** | **50 %** |
+
+Plantages : 0.
+
+**Lecture honnête.**
+- Sur du code jamais vu, Rempart n'a trouvé **aucun vrai problème** dans le top 10 critique/high de ces 5 dépôts.
+- La moitié de ce qu'il signale en critique/high est faux :
+  - 4 redirections ouvertes ou XSS déjà gardées (`is_safe_url`, `text/plain`) ;
+  - des `eval` sur du code de l'application elle-même ;
+  - un mot de passe `trust` sur une base de CI jetable ;
+  - un `.env` sans secret ;
+  - un contrôle TLS volontairement désactivé pour lire un certificat expiré.
+- L'autre moitié est vraie, mais de faible valeur ou atténuée : socket Docker pour Traefik, `Role` à jokers limité à un namespace, OIDC derrière un contrôle d'accès des mainteneurs.
+- Le 50 % / 75 % de l'ensemble de réglage **ne se généralise pas** : 0 % / 50 % ici. Le README le dira (phase de suivi, non faite ici).
+
+Une seule lecture hors du dépôt scanné : le workflow partagé `cloudposse/.github/.github/workflows/shared-terraform-chatops.yml@main`, lu le 2026-10-24, pour étiqueter `GHA-OIDC-UNTRUSTED` de terraform-aws-rds (il vérifie la permission du commentateur avant de lancer quoi que ce soit).
+
+**Test existant modifié.** `tests/test_realworld.py::test_manifests_are_pinned_and_labels_well_formed` affirmait que `bench/holdout/labels.json` n'existe pas : c'était la garde du protocole « étiquettes écrites seulement à la fin ». Elle est remplacée par une garde adaptée à la fin :
+- les étiquettes du holdout doivent nommer le commit étiqueté (`labelled_at`) ;
+- elles doivent déclarer que rien n'a été corrigé ;
+- elles doivent être bien formées ;
+- **aucun fichier de `src/` ne doit avoir changé depuis ce commit**, vérifié chaque fois que ce commit est dans l'historique local. Dans une CI en clone superficiel, seul le format est vérifié.
+
+### Scénarios d'attaque F1 à F4 : rejoués, tous bloqués
+
+Rejoués à la main sur `f29b428`, par la vraie CLI et le vrai serveur MCP, dans des dossiers et des `REMPART_HOME` jetables (script hors dépôt). Chaque scénario est aussi couvert par les tests de la phase 1.
+
+| # | Scénario de l'audit | Avant (audit, `72eb339`) | Maintenant |
+|---|---|---|---|
+| F1 | 12 `rempart:ignore[CODE-SQL-INJECTION]` dans un dépôt A, puis scan d'un dépôt B avec une vraie injection SQL | B passe de CRITICAL 0,90 à HIGH 0,14 ; `--fail-on critical` passe | B reste **CRITICAL 0,90** ; `--fail-on critical` → **exit 1** |
+| F2 | Un scanner qui échoue (ici le scanner de code sur django, forcé par `--scanner-timeout 0.5`) | « grade A », exit 0 | « Posture score: INCOMPLETE … no grade is given », `SCANNER-ERROR`, **exit 3** |
+| F3 | Un assistant MCP enregistre `fp` sur une injection SQL | stocké `('fp', 'human')`, le scan suivant `--fail-on high` → exit 0 | stocké `('fp', 'ai_assistant')`, le scan suivant `--fail-on high` → **exit 1** |
+| F4 | La PR ajoute `disable = ["CODE-CMD-INJECTION"]` dans `.rempart.toml` et déclare `ping` comme nettoyeur dans `knowledge.toml` | exit 1 → 0 | En mode CI (`--baseline main`, configuration lue sur `main`) : `CODE-CMD-INJECTION` reste signalé, plus 2 `REMPART-CONFIG-CHANGED`, **exit 1** |
+
+Pour F4, un scan local **sans** `--baseline` applique la configuration du dépôt lui-même. C'est voulu : c'est votre propre configuration. Dans ce rejeu, il sort tout de même en 1, à cause de deux XSS propres à la fixture (la route renvoie `str(os.system(...))`).
+
+## Synthèse finale
+
+### Par identifiant
+
+Le détail de chaque ligne est dans la section de sa phase. Tous les tests sont dans `tests/test_audit_fixes.py`, sauf mention contraire, et chacun a été vu en échec avant son correctif.
+
+| Id | Statut | Commits | Test | Reste incomplet |
+|---|---|---|---|---|
+| F1 | corrigé | `de111f3` | `F1LearningIsolationTest` | Un fork partage l'identité du projet d'origine (plafonné à 1,0 par règle). |
+| F2 | corrigé | `6739e6e` | `F2FailClosedTest` | Un scanner hors délai est abandonné, pas tué. |
+| F3 | corrigé | `b665538` | `F3AssistantCannotCloseTest` | — |
+| F4 | corrigé | `6744132` | `F4ConfigFromBaseTest` | Les `rempart:ignore` ajoutés par une PR s'appliquent toujours (documenté). |
+| F5 | corrigé | `3af5eed` | `F5AgentNeverSeesSecretsTest` | Un secret de format inconnu, non affecté à un nom évocateur, passe. |
+| F6 | corrigé | `27d62f4` | `F6AgentOutputsTest` | Contrôle statique, contournable par du code obfusqué. **Non vérifié** contre une vraie injection de prompt (aucun appel API). |
+| F7 | corrigé | `2534199` | `F7LiveVerificationTest` | Telegram et Mapbox gardent le jeton dans l'URL. L'usage sur le dépôt d'autrui reste déclaratif. |
+| F8 | corrigé | `61c6430` | `F8McpBoundariesTest` | `rempart_image_scan` peut tirer depuis un registre interne (écrit dans le README). |
+| F9 | corrigé | `a4db1e4` | `F9SearchCannotHangTest` | — |
+| R1 | corrigé | `2081f59` | `R1NoCrashTest` | — |
+| R2 | corrigé | `cd66dbb`, `cce66de`, `5f2af1e`, `2ed7941` | `R2SafeResolutionTest` | Python seulement. Un échappeur du projet est cru sur son nom. |
+| R3 | corrigé | `109e54e` | `R3ImportAliasesTest` | Python seulement. Les imports dynamiques ne sont pas suivis. |
+| R4 | corrigé | `4d99163` | `R4FileKindsTest` | Heuristique sur les chemins. |
+| R5 | corrigé | `5d73e96`, `059cff6` | `R5ChainsTest` | Un « lien » n'est pas une preuve d'exploitation. |
+| R6 | corrigé | `825b2b4` … `31d2c39` (9 commits) | `R6FalsePositivesTest` | Une route Flask qui renvoie une liste est encore signalée XSS. Un webhook avec signature vérifiée reste signalé en CSRF. |
+| R7 | corrigé | `58f830d` | `R7TerraformValuesTest` | Les entrées des modules enfants et les `for_each` à plusieurs éléments ne sont pas résolus. |
+
+### Avant / après
+
+| Mesure | Avant (P0, `70fae95`) | Après (`f29b428`, code identique à `8607b92`) |
+|---|---|---|
+| Tests | 164 | **245**, 0 sauté |
+| Bench interne (précision / rappel) | 100 % / 97,8 % | 100 % / **98,9 %** |
+| OWASP Benchmark Python, sans INFO / avec INFO | 99,4 / 87,7 | 99,4 / 87,7 |
+| Bench réel (ensemble de réglage), strict / large | 4 % / 21 % (24 étiquetés) | 50 % / 75 % (8 étiquetés) — **ensemble de réglage** |
+| Holdout (jamais vu), strict / large | non mesuré (protocole) | **0 % / 50 %** (18 étiquetés) |
+| Temps de scan, dépôts moyens | 0,3 à 5,8 s | 0,3 à 7,8 s (CTFd, holdout : 49,5 s) |
+| Temps de scan, django | 50,2 s (plantage en cours de route) | 107 s, scan complet |
+| Plantages | 1 (django, masqué : « grade A », exit 0) | **0** ; un plantage éventuel donne exit 3 |
+| Scénarios d'attaque F1 à F4 | 4 réussis | **4 bloqués** |
+| Dogfooding (`scan . --fail-on high`) | exit 0 | exit 0 |
+
+### Ce qui n'a pas été corrigé, et pourquoi
+
+- **Précision sur code jamais vu** : 0 % stricte sur le holdout. Les correctifs R1 à R7 retirent des faux positifs précis, mais les règles de code par motif et les règles d'hygiène (Docker, Kubernetes, CI) produisent encore des HIGH/CRITICAL de faible valeur. Les corriger à partir du holdout est interdit par le protocole. Il faudrait un nouveau holdout pour mesurer la suite.
+- **Le README** affiche encore le tableau de l'ensemble de réglage, sans le chiffre du holdout. Il faut l'ajouter. Je ne l'ai pas fait seul, parce que la consigne de la phase 5 est de ne rien corriger : je te le propose.
+- Flux de données **JavaScript** entre modules, et R2/R3 pour JavaScript : hors du périmètre de l'audit, toujours limité à un fichier.
+- Les **sorties de l'agent IA** (F6) ne sont **pas vérifiées** contre une vraie injection de prompt : aucun appel à l'API dans cette campagne.
+- **Cloud en direct** : jamais exécuté contre un vrai compte (**non vérifié**). Le 9/9 de cspm-lite en direct est **non vérifié**.
+- Le **job nightly** n'a jamais tourné sur GitHub : rien n'a été poussé (**non vérifié**).
+- Les **listes de paquets populaires** (typosquat) datent de leur téléchargement et doivent être régénérées.
