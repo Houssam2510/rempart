@@ -1,0 +1,150 @@
+{
+ "protocol": "Held-out set, scanned once at the end of the October 2026 fixes (phase 5) with bench/realworld.py --manifest bench/holdout, top 10 critical/high per repository labelled by reading the code with the audit's method (tp = real issue, fp = wrong, debatable = true statement of low value or mitigated). Nothing was fixed from these results.",
+ "labelled_at": "bb93ad3dda62a00700a2d12ef8b4493681145911",
+ "labels": [
+  {
+   "repo": "CTFd",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "CTFd/auth.py",
+   "line": 404,
+   "label": "fp",
+   "reason": "Guarded on the same line by validators.is_safe_url(next), a port of Django's url_has_allowed_host_and_scheme (strips control characters, handles backslashes, checks scheme and host)."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "CTFd/auth.py",
+   "line": 492,
+   "label": "fp",
+   "reason": "Same is_safe_url guard as auth.py:404."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-OPEN-REDIRECT",
+   "path": "CTFd/utils/initialization/__init__.py",
+   "line": 213,
+   "label": "fp",
+   "reason": "Redirects to APPLICATION_ROOT + script_root + request.full_path: a path on the same site, prefixed by the configured application root."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-XSS-SINK",
+   "path": "CTFd/views.py",
+   "line": 562,
+   "label": "fp",
+   "reason": "The /debug response sets mimetype text/plain (line 561) and only exists in SAFE_MODE; it is not rendered as HTML."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "GHA-SECRET-ECHO",
+   "path": ".github/workflows/mirror-core-theme.yml",
+   "line": 19,
+   "label": "debatable",
+   "reason": "The deploy key is redirected into ~/.ssh/id_ed25519, not printed; push to main only. Passing it through env: instead of ${{ }} interpolation would be better hygiene; low value."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "DATA-SERVER-HARDENING",
+   "path": ".github/workflows/postgres.yml",
+   "line": 22,
+   "label": "fp",
+   "reason": "POSTGRES_HOST_AUTH_METHOD=trust on a throwaway CI service container used by the test job."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-EVAL",
+   "path": "CTFd/themes/admin/assets/js/components/flags/FlagCreationForm.vue",
+   "line": 98,
+   "label": "fp",
+   "reason": "Evaluates the <script> of the flag-type template the application itself serves (urlRoot + templates.create), in the admin interface; no attacker-controlled text."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-EVAL",
+   "path": "CTFd/themes/admin/assets/js/components/flags/FlagEditForm.vue",
+   "line": 83,
+   "label": "fp",
+   "reason": "Same as FlagCreationForm.vue:98: scripts of the application's own flag-type edit template, rendered by nunjucks."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-EVAL",
+   "path": "CTFd/themes/core/assets/js/challenges.js",
+   "line": 307,
+   "label": "debatable",
+   "reason": "new Function() over themeSettings.challenge_category_order, set by an admin and run in every participant's browser. True, but the source is an admin, trusted by CTFd's model (a compromised admin could already change the theme)."
+  },
+  {
+   "repo": "CTFd",
+   "rule": "CODE-EVAL",
+   "path": "CTFd/themes/core/assets/js/challenges.js",
+   "line": 329,
+   "label": "debatable",
+   "reason": "Same as challenges.js:307 for themeSettings.challenge_order."
+  },
+  {
+   "repo": "full-stack-fastapi-template",
+   "rule": "COMPOSE-DOCKER-SOCKET",
+   "path": "compose.yml",
+   "line": 7,
+   "label": "debatable",
+   "reason": "Docker socket mounted into Traefik, which listens on :80. ':ro' does not restrict the Docker API, so a Traefik compromise is host root; but it is the documented Traefik docker-provider pattern. CRITICAL overstates it."
+  },
+  {
+   "repo": "full-stack-fastapi-template",
+   "rule": "SEC-ENV-COMMITTED",
+   "path": ".env",
+   "line": 1,
+   "label": "debatable",
+   "reason": "A template .env whose secrets are the placeholder 'changethis'; Settings._check_default_secret refuses them outside development, although this same .env sets FASTAPI_ENV=development."
+  },
+  {
+   "repo": "full-stack-fastapi-template",
+   "rule": "SEC-ENV-COMMITTED",
+   "path": "frontend/.env",
+   "line": 1,
+   "label": "fp",
+   "reason": "Contains only VITE_API_URL and MAILPIT_HOST, two localhost URLs: no secret."
+  },
+  {
+   "repo": "full-stack-fastapi-template",
+   "rule": "DOCKER-CURL-PIPE-SHELL",
+   "path": "frontend/Dockerfile.playwright",
+   "line": 8,
+   "label": "debatable",
+   "reason": "curl https://bun.sh/install | bash in the Playwright end-to-end test image: true, over HTTPS, test-only image."
+  },
+  {
+   "repo": "terraform-aws-rds",
+   "rule": "GHA-OIDC-UNTRUSTED",
+   "path": ".github/workflows/chatops.yml",
+   "line": 9,
+   "label": "debatable",
+   "reason": "issue_comment can mint an OIDC token, but the called cloudposse/.github shared-terraform-chatops.yml first runs shared-access-controller (permission run_terratest for the commenter): PR code runs with cloud credentials only after a maintainer's /terratest. Read at cloudposse/.github main on 2026-10-24."
+  },
+  {
+   "repo": "podinfo",
+   "rule": "K8S-RBAC-WILDCARD",
+   "path": "deploy/secure/common/reconciler-rbac.yaml",
+   "line": 15,
+   "label": "debatable",
+   "reason": "A namespaced Role (not a ClusterRole) granting */*/* to the GitOps reconciler of its own namespace: the intended multi-tenant design. CRITICAL overstates it."
+  },
+  {
+   "repo": "podinfo",
+   "rule": "K8S-RBAC-WILDCARD",
+   "path": "deploy/webapp/common/reconciler-rbac.yaml",
+   "line": 15,
+   "label": "debatable",
+   "reason": "Same as deploy/secure/common/reconciler-rbac.yaml, namespace webapp."
+  },
+  {
+   "repo": "podinfo",
+   "rule": "CODE-TLS-VERIFY-DISABLED",
+   "path": "cmd/podcli/check.go",
+   "line": 227,
+   "label": "fp",
+   "reason": "`podcli check cert` reads a site's certificate to report its expiry; skipping verification is what lets it read an expired one, and nothing is sent over the connection."
+  }
+ ]
+}

@@ -53,7 +53,26 @@ class ScoringTest(unittest.TestCase):
             self.assertIn(lb["repo"], names)
             self.assertIn(lb["label"], ("tp", "fp", "debatable"))
             self.assertTrue(lb["reason"])
-        self.assertFalse((ROOT / "bench" / "holdout" / "labels.json").exists(), "holdout labels are written only at the end")
+        # The holdout labels were forbidden until phase 5 (written only at the end). Now that they exist,
+        # they must name the code commit they were made against, and no source may change after it
+        # because of them: checked whenever that commit is in the local history.
+        held = ROOT / "bench" / "holdout" / "labels.json"
+        if held.exists():
+            doc = json.loads(held.read_text())
+            self.assertRegex(doc["labelled_at"], r"^[0-9a-f]{40}$")
+            self.assertIn("Nothing was fixed", doc["protocol"])
+            hnames = {r["name"] for r in json.loads((ROOT / "bench" / "holdout" / "repos.json").read_text())["repos"]}
+            for lb in doc["labels"]:
+                self.assertIn(lb["repo"], hnames)
+                self.assertIn(lb["label"], ("tp", "fp", "debatable"))
+                self.assertTrue(lb["reason"])
+            import subprocess
+
+            known = subprocess.run(["git", "-C", str(ROOT), "cat-file", "-e", doc["labelled_at"] + "^{commit}"], capture_output=True)
+            if known.returncode == 0:
+                changed = subprocess.run(["git", "-C", str(ROOT), "diff", "--name-only", doc["labelled_at"], "HEAD", "--", "src"],
+                                         capture_output=True, text=True).stdout.split()
+                self.assertEqual(changed, [], "source changed after the holdout was labelled: re-measure it, do not tune on it")
 
 
 class RegressionCheckTest(unittest.TestCase):
