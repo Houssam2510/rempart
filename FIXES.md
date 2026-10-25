@@ -160,3 +160,25 @@ Correctif trouvé en refaisant la capture : la narration des chaînes écrivait 
 | Bench réel strict / large | 50 % / 75 % | 50 % / 75 % (`--check bench/realworld/baseline.json` : aucune régression) |
 | django | 0 plantage, 109 s | 0 plantage, 109 s |
 | Dogfooding | exit 0 | exit 0 |
+
+## Phase 4 — concentration
+
+| Point demandé | Statut | Commit | Test | Reste incomplet |
+|---|---|---|---|---|
+| Cloud live, images, web, qualité/performance en « expérimental », désactivés par défaut, activables par option | fait | `49a6881` | `P4ExperimentalTest` (4, vus en échec avant) : profil par défaut sans qualité/performance, `--experimental` les active et les marque, aide des options et commandes, même profil pour la TUI et le MCP | Le cloud live, les images et le web demandaient déjà une option ou une commande : ils sont désormais **marqués** (aide, avis sur stderr, `"experimental": true`), pas désactivés davantage. Qualité/performance sont coupées par **domaine**, car le scanner data produit aussi des `PERF-*`. |
+| Profil par défaut centré sur code, dépendances, secrets, IaC, Kubernetes, CI/CD, chaînes linked, apprentissage | fait, avec une interprétation | `49a6881` | idem | Data, IA, conteneurs (Dockerfile) et supply chain restent actifs : la consigne nomme quatre parties expérimentales, pas celles-là. Les chaînes *correlated* restent visibles, plafonnées à HIGH (R5). |
+| Signalé dans le README | fait | `8607b92` | — | Marque 🧪 et paragraphe « Experimental », ligne dans les Limites, capture redessinée (`scripts/render_demo.py`), section dans `docs/ARCHITECTURE.md`. |
+| Ne rien supprimer | respecté | — | `run_scan()` garde tout par défaut : `rempart bench` et les tests mesurent toujours ces domaines | — |
+
+### Mesures après la phase 4 — exécuté sur `8607b92`
+
+| Mesure | Après P3 | Après P4 |
+|---|---|---|
+| Tests | 241 OK | **245 OK** |
+| Bench interne | 100 % / 98,9 % | 100 % / 98,9 % (aucune régression) |
+| OWASP sans INFO / avec INFO | 99,4 / 87,7 | 99,4 / 87,7 |
+| Bench réel strict / large | 50 % / 75 % | 50 % / 75 % (`--check` : aucune régression ; même top 10) |
+| django | 0 plantage, 109 s, 2/34/304/135 | 0 plantage, 107 s, **2/3/142/76** (31 des 34 HIGH venaient de qualité/performance) |
+| Dogfooding | exit 0 | exit 0 |
+
+Volume par dépôt (CRIT/HIGH/MED/LOW), avant → après P4 : microblog 0/0/3/4 → 0/0/2/2 ; djangoproject.com 0/1/22/28 → 0/1/16/16 ; terraform-aws-eks 0/0/17/14 → 0/0/17/12 ; microservices-demo 2/5/60/122 → 2/5/57/113.
